@@ -534,6 +534,9 @@ def generate_export_zip(df, now):
 
     buf.seek(0)
     return buf
+
+
+def main():
     # Load data
     df = load_data()
     now = datetime.now()
