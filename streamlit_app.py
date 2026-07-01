@@ -581,6 +581,9 @@ def _setup_cn_font():
 
 CN_FONT_PROP = None  # Lazy init
 PPT_FONT = 'Microsoft YaHei'
+PPT_DARK_BG = RGBColor(0x1A, 0x1A, 0x2E)
+PPT_PRIMARY = RGBColor(0x18, 0x90, 0xFF)
+PPT_LOGO_BLOB = None
 
 
 def _chart_to_img(fig):
@@ -600,7 +603,7 @@ def _add_slide_title(slide, title_text, prs):
         prs.slide_width, Inches(0.7)
     )
     title_box.fill.solid()
-    title_box.fill.fore_color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    title_box.fill.fore_color.rgb = PPT_DARK_BG
     title_box.line.fill.background()
     tf = title_box.text_frame
     tf.word_wrap = True
@@ -696,10 +699,73 @@ def _make_bar_chart(labels, values, title, color='#1890FF', highlight_n=0):
     return fig
 
 
-def generate_export_ppt(df, now):
+def extract_template_assets(template_bytes):
+    """从上传的模板 PPT 中提取 Logo、配色、字体信息"""
+    assets = {
+        'logo_blob': None,
+        'logo_content_type': 'image/png',
+        'primary_color': RGBColor(0xE6, 0x00, 0x12),  # TCL red (default)
+        'dark_bg': RGBColor(0x1A, 0x1A, 0x2E),
+        'title_font': 'Microsoft YaHei',
+        'body_font': 'Microsoft YaHei',
+        'accent_gray': RGBColor(0x89, 0x89, 0x89),
+        'has_template': False,
+    }
+    try:
+        tmpl = Presentation(io.BytesIO(template_bytes))
+        assets['has_template'] = True
+
+        # Extract first slide's logo image
+        if len(tmpl.slides) > 0:
+            for shape in tmpl.slides[0].shapes:
+                if shape.shape_type == 13:  # PICTURE
+                    assets['logo_blob'] = shape.image.blob
+                    assets['logo_content_type'] = shape.image.content_type
+                    assets['logo_width'] = shape.width
+                    assets['logo_height'] = shape.height
+                    assets['logo_left'] = shape.left
+                    assets['logo_top'] = shape.top
+                    break  # Take first image only
+
+        # Extract font from first text element
+        for slide in tmpl.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for p in shape.text_frame.paragraphs:
+                        if p.runs and p.runs[0].font.name:
+                            fn = p.runs[0].font.name
+                            if fn and 'yahei' in fn.lower() or '微软' in fn:
+                                assets['title_font'] = fn
+                                assets['body_font'] = fn
+                                break
+                    if assets['title_font'] != 'Microsoft YaHei':
+                        break
+            if assets['title_font'] != 'Microsoft YaHei':
+                break
+
+    except Exception:
+        pass  # Return defaults if template parsing fails
+
+    return assets
+
+
+def generate_export_ppt(df, now, template_assets=None):
     """生成 PPT 数据分析报告"""
-    global CN_FONT_PROP
+    global CN_FONT_PROP, PPT_FONT, PPT_DARK_BG, PPT_PRIMARY, PPT_LOGO_BLOB
     CN_FONT_PROP = _setup_cn_font()
+
+    # Apply template assets to globals
+    ta = template_assets or {}
+    if ta.get('has_template'):
+        PPT_FONT = ta.get('title_font', 'Microsoft YaHei')
+        PPT_PRIMARY = ta.get('primary_color', RGBColor(0xE6, 0x00, 0x12))
+        PPT_DARK_BG = ta.get('dark_bg', RGBColor(0x1A, 0x1A, 0x2E))
+        PPT_LOGO_BLOB = ta.get('logo_blob')
+    else:
+        PPT_FONT = 'Microsoft YaHei'
+        PPT_PRIMARY = RGBColor(0x18, 0x90, 0xFF)
+        PPT_DARK_BG = RGBColor(0x1A, 0x1A, 0x2E)
+        PPT_LOGO_BLOB = None
 
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -722,8 +788,16 @@ def generate_export_ppt(df, now):
         prs.slide_width, prs.slide_height
     )
     bg.fill.solid()
-    bg.fill.fore_color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    bg.fill.fore_color.rgb = PPT_DARK_BG
     bg.line.fill.background()
+
+    # Logo (if from template)
+    if PPT_LOGO_BLOB:
+        try:
+            logo_stream = io.BytesIO(PPT_LOGO_BLOB)
+            slide.shapes.add_picture(logo_stream, Inches(0.5), Inches(0.5), Inches(3.5), Inches(1.2))
+        except Exception:
+            pass
 
     # Title
     txBox = slide.shapes.add_textbox(Inches(1.5), Inches(2.0), Inches(10), Inches(1.5))
@@ -786,7 +860,7 @@ def generate_export_ppt(df, now):
         p2 = tf.add_paragraph()
         p2.text = value
         p2.font.size = Pt(28)
-        p2.font.color.rgb = RGBColor(0xE7, 0x4C, 0x3C) if '🔴' in label else RGBColor(0x18, 0x90, 0xFF)
+        p2.font.color.rgb = RGBColor(0xE7, 0x4C, 0x3C) if '🔴' in label else PPT_PRIMARY
         p2.font.bold = True
         p3 = tf.add_paragraph()
         p3.text = sub
@@ -1043,7 +1117,7 @@ def generate_export_ppt(df, now):
         p.text = title
         p.font.size = Pt(13)
         p.font.bold = True
-        p.font.color.rgb = RGBColor(0x18, 0x90, 0xFF)
+        p.font.color.rgb = PPT_PRIMARY
         p2 = tf.add_paragraph()
         p2.text = detail
         p2.font.size = Pt(10)
@@ -1098,7 +1172,24 @@ def main():
         )
         st.caption("14个CSV：明细数据 + 各维度统计 + 交叉表 + 超期预警")
 
-        export_ppt = generate_export_ppt(filtered, now)
+        st.divider()
+        st.markdown("### 🎨 PPT模板（可选）")
+        uploaded_template = st.file_uploader(
+            "上传 .pptx 模板以套用品牌风格",
+            type=['pptx'],
+            help="上传公司PPT模板，导出报告将自动提取Logo、配色、字体并应用",
+        )
+        if uploaded_template:
+            template_assets = extract_template_assets(uploaded_template.read())
+            if template_assets['has_template']:
+                st.success(f"✅ 已提取模板 | Logo: {'有' if template_assets['logo_blob'] else '无'} | 字体: {template_assets['title_font']}")
+            else:
+                st.warning("未能识别模板元素，将使用默认风格")
+                template_assets = None
+        else:
+            template_assets = None
+
+        export_ppt = generate_export_ppt(filtered, now, template_assets)
         st.download_button(
             label="📊 导出数据分析报告 (PPT)",
             data=export_ppt,
