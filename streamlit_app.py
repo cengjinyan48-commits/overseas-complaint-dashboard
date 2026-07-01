@@ -11,6 +11,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 import os
+import io
+import zipfile
 
 # ============================================================
 # Page Config
@@ -411,7 +413,127 @@ def make_cycle_chart(df):
 # ============================================================
 # Main App
 # ============================================================
-def main():
+def generate_export_zip(df, now):
+    """生成包含全部分析维度 + 明细数据的 ZIP 文件"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+
+        # --- 01 客诉明细数据 ---
+        detail_cols = {
+            '编号_int': '编号', '分公司': '分公司', '国家或地区': '国家', '是否大客户': '大客户',
+            '投诉日期': '投诉日期', '应结案日期': '应结案日期', '实际完成日期': '实际完成日期',
+            '完成周期（天）': '完成周期(天)', '机型属性': '机型', '故障大类': '故障大类',
+            '结案状态': '结案状态', '处理类型': '处理类型', '跟进人': '跟进人',
+            '品质负责人': '品质负责人', '8D报告': '8D报告', '问题描述': '问题描述',
+        }
+        detail = df[list(detail_cols.keys())].copy()
+        detail.columns = list(detail_cols.values())
+        for dc in ['投诉日期','应结案日期','实际完成日期']:
+            if dc in detail.columns:
+                detail[dc] = detail[dc].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and hasattr(x,'strftime') else '')
+        zf.writestr('01_客诉明细数据.csv', detail.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 02 分公司分布 ---
+        branch = df['分公司'].value_counts().reset_index()
+        branch.columns = ['分公司','投诉数量']
+        branch['占比(%)'] = (branch['投诉数量'] / len(df) * 100).round(1)
+        zf.writestr('02_分公司分布.csv', branch.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 03 国家地区TOP ---
+        country = df['国家或地区'].value_counts().reset_index()
+        country.columns = ['国家或地区','投诉数量']
+        country['占比(%)'] = (country['投诉数量'] / len(df) * 100).round(1)
+        zf.writestr('03_国家地区统计.csv', country.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 04 月度趋势 ---
+        monthly = df.groupby(df['投诉日期'].dt.to_period('M').astype(str)).agg(
+            投诉量=('编号_int','count'),
+            已结案量=('结案状态', lambda x: x.isin(['结案','关闭']).sum()),
+            未结案量=('结案状态', lambda x: (~x.isin(['结案','关闭'])).sum()),
+        ).reset_index()
+        monthly.columns = ['月份','投诉量','已结案量','未结案量']
+        monthly['结案率(%)'] = (monthly['已结案量'] / monthly['投诉量'] * 100).round(1)
+        zf.writestr('04_月度趋势.csv', monthly.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 05 结案状态 ---
+        status = df['结案状态'].value_counts().reset_index()
+        status.columns = ['结案状态','数量']
+        status['占比(%)'] = (status['数量'] / len(df) * 100).round(1)
+        zf.writestr('05_结案状态分布.csv', status.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 06 故障大类帕累托 ---
+        fault = df['故障大类'].value_counts().reset_index()
+        fault.columns = ['故障大类','数量']
+        fault = fault.sort_values('数量', ascending=False)
+        fault['占比(%)'] = (fault['数量'] / fault['数量'].sum() * 100).round(1)
+        fault['累计占比(%)'] = fault['占比(%)'].cumsum().round(1)
+        zf.writestr('06_故障大类帕累托.csv', fault.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 07 机型属性 ---
+        model = df['机型属性'].value_counts().reset_index()
+        model.columns = ['机型属性','数量']
+        model['占比(%)'] = (model['数量'] / len(df) * 100).round(1)
+        zf.writestr('07_机型属性分布.csv', model.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 08 跟进人工作量 ---
+        follower = df['跟进人'].value_counts().reset_index()
+        follower.columns = ['跟进人','处理数量']
+        follower['占比(%)'] = (follower['处理数量'] / len(df) * 100).round(1)
+        zf.writestr('08_跟进人工作量.csv', follower.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 09 品质负责人 ---
+        qa = df['品质负责人'].value_counts().reset_index()
+        qa.columns = ['品质负责人','负责数量']
+        qa['占比(%)'] = (qa['负责数量'] / len(df) * 100).round(1)
+        zf.writestr('09_品质负责人分布.csv', qa.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 10 超期未结案 ---
+        overdue_mask = ~df['结案状态'].isin(['结案','关闭']) & df['应结案日期'].notna() & (df['应结案日期'] < now)
+        overdue = df[overdue_mask][['编号_int','国家或地区','投诉日期','应结案日期','结案状态','跟进人','问题描述']].copy()
+        if len(overdue) > 0:
+            overdue['超期天数'] = (now - overdue['应结案日期']).dt.days
+            overdue.columns = ['编号','国家','投诉日期','应结案日期','结案状态','跟进人','问题描述','超期天数']
+            for dc in ['投诉日期','应结案日期']:
+                overdue[dc] = overdue[dc].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and hasattr(x,'strftime') else '')
+        else:
+            overdue = pd.DataFrame({'提示': ['无超期未结案记录']})
+        zf.writestr('10_超期未结案预警.csv', overdue.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 11 分公司×结案状态交叉表 ---
+        cross = pd.crosstab(df['分公司'], df['结案状态'])
+        cross['合计'] = cross.sum(axis=1)
+        cross = cross.sort_values('合计', ascending=False)
+        zf.writestr('11_分公司×结案状态交叉表.csv', cross.to_csv(encoding='utf-8-sig'))
+
+        # --- 12 故障大类×机型交叉表 ---
+        cross2 = pd.crosstab(df['故障大类'], df['机型属性'])
+        cross2['合计'] = cross2.sum(axis=1)
+        cross2 = cross2.sort_values('合计', ascending=False)
+        zf.writestr('12_故障大类×机型交叉表.csv', cross2.to_csv(encoding='utf-8-sig'))
+
+        # --- 13 8D报告统计 ---
+        d8 = df['8D报告'].value_counts().reset_index()
+        d8.columns = ['8D报告状态','数量']
+        d8['占比(%)'] = (d8['数量'] / len(df) * 100).round(1)
+        zf.writestr('13_8D报告覆盖率.csv', d8.to_csv(index=False, encoding='utf-8-sig'))
+
+        # --- 14 完成周期统计 ---
+        cycle = df['完成周期（天）'].dropna()
+        cycle_stats = pd.DataFrame({
+            '指标': ['记录数','平均值','中位数','最小值','最大值','标准差'],
+            '数值': [
+                len(cycle),
+                round(cycle.mean(), 1),
+                round(cycle.median(), 1),
+                int(cycle.min()),
+                int(cycle.max()),
+                round(cycle.std(), 1),
+            ]
+        })
+        zf.writestr('14_完成周期统计.csv', cycle_stats.to_csv(index=False, encoding='utf-8-sig'))
+
+    buf.seek(0)
+    return buf
     # Load data
     df = load_data()
     now = datetime.now()
@@ -429,6 +551,19 @@ def main():
         st.divider()
         st.caption(f"筛选后记录数: **{len(filtered)}** / {len(df)}")
         st.caption(f"数据生成时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        st.divider()
+        st.markdown("### 📥 导出数据分析")
+
+        export_zip = generate_export_zip(filtered, now)
+        st.download_button(
+            label="⬇️ 一键导出全部分析数据 (ZIP)",
+            data=export_zip,
+            file_name=f"海外客诉分析数据_{now.strftime('%Y%m%d_%H%M')}.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+        st.caption("包含 14 个CSV文件：明细数据 + 各维度统计 + 交叉表 + 超期预警")
 
     # ---- Main Area ----
     # Header
