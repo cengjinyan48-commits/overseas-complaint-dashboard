@@ -1,0 +1,17 @@
+# Streamlit
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Generated HTML (optional, keep if you want)
+# 2026年海外客户投诉数据看板.html
