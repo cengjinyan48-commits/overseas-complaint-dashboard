@@ -1305,7 +1305,9 @@ def generate_export_ppt(df, now, template_bytes=None):
 
 
 def main():
-    now = pd.Timestamp(datetime.now(BJT))
+    # 剥离时区信息以兼容 Excel 中的 naive datetime64[ns] 列 (Python 3.14 + pandas 3.x 要求)
+    now_bjt = datetime.now(BJT)
+    now = pd.Timestamp(now_bjt.replace(tzinfo=None))
 
     # ---- Sidebar ----
     with st.sidebar:
