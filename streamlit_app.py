@@ -38,52 +38,27 @@ st.set_page_config(
 # ============================================================
 # Data Source Config
 # ============================================================
-GSHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRyd2UWVQaY1W3JcDilF4si3zB4ehRL3D4lIiN4c12NM3Ckv-UsK9mMV5OCE_20Iq-kvwZ8gf1eE3cN/pub?output=csv"
-GSHEET_EDIT_URL = "https://docs.google.com/spreadsheets/d/1rw-ZzbXnGxgsQPWB5cTp7SW20cDdK-PRLP2WcIOoxJk/edit?gid=695476880#gid=695476880"
 LOCAL_FILE = os.path.join(os.path.dirname(__file__), "2026年海外客户投诉台账.xlsx")
+KDOCS_EDIT_URL = "https://www.kdocs.cn/"  # 金山文档链接（导入后可替换此URL）
+CSV_COLS = [
+    '编号','分公司','国家或地区','是否大客户','投诉日期','应结案日期','实际完成日期',
+    '完成周期（天）','机型属性','故障比例','问题描述','客户诉求','跟进人','处理类型',
+    '结案状态','应急措施','原因分析','长期整改措施','责任单位','故障大类','品质负责人',
+    '8D报告','8D措施点检','备注'
+]
 
 # ============================================================
-# Data Loading (cached, short TTL for near real-time)
+# Data Loading
 # ============================================================
-@st.cache_data(ttl=30)
-def load_data():
-    """从 Google Sheets 实时读取数据，本地 Excel 作为备选"""
-    df = None
-    source_label = ""
-
-    # 1. Try Google Sheets first
-    try:
-        df = pd.read_csv(GSHEET_CSV_URL, encoding='utf-8', skiprows=1)
-        # Verify it's valid data (has expected columns)
-        if '编号' in df.columns and len(df) > 10:
-            source_label = "Google Sheets (实时)"
-        else:
-            df = None
-    except Exception:
-        df = None
-
-    # 2. Fallback to local Excel
-    if df is None:
-        try:
-            df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1)
-            source_label = "本地 Excel"
-        except Exception:
-            st.error("❌ 无法加载数据源，请检查 Google Sheets 或本地文件")
-            st.stop()
-
+def _process_raw_df(df):
+    """清洗和标准化原始 DataFrame"""
     df = df.dropna(how='all')
 
-    # Normalize columns (Google Sheets CSV might have slightly different headers)
+    # Normalize column names (handle different encodings/spacing)
     col_map = {}
-    expected_cols = [
-        '编号','分公司','国家或地区','是否大客户','投诉日期','应结案日期','实际完成日期',
-        '完成周期（天）','机型属性','故障比例','问题描述','客户诉求','跟进人','处理类型',
-        '结案状态','应急措施','原因分析','长期整改措施','责任单位','故障大类','品质负责人',
-        '8D报告','8D措施点检','备注'
-    ]
     for c in df.columns:
         c_stripped = c.strip().replace('\n','').replace('\r','')
-        for ec in expected_cols:
+        for ec in CSV_COLS:
             if c_stripped == ec or c_stripped == ec.replace('（','(').replace('）',')'):
                 col_map[c] = ec
                 break
@@ -104,7 +79,31 @@ def load_data():
     df['故障比例'] = pd.to_numeric(df['故障比例'], errors='coerce')
     df['投诉月份'] = df['投诉日期'].dt.to_period('M').astype(str)
 
-    # Store source info for display
+    return df
+
+
+def load_data(uploaded_file=None):
+    """加载数据: 上传文件 > 本地Excel备选"""
+    source_label = ""
+
+    if uploaded_file is not None:
+        # User uploaded file via sidebar
+        try:
+            df = pd.read_excel(uploaded_file, sheet_name='所有客诉', header=1)
+            source_label = "📤 已上传文件"
+        except Exception:
+            st.error("❌ 无法读取上传的文件，请确认格式正确")
+            st.stop()
+    else:
+        # Fallback: local Excel
+        try:
+            df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1)
+            source_label = "GitHub 本地文件"
+        except Exception:
+            st.error("❌ 无法加载数据源，请检查文件")
+            st.stop()
+
+    df = _process_raw_df(df)
     df.attrs['source'] = source_label
     return df
 
@@ -1305,8 +1304,6 @@ def generate_export_ppt(df, now, template_bytes=None):
 
 
 def main():
-    # Load data
-    df = load_data()
     now = datetime.now()
 
     # ---- Sidebar ----
@@ -1314,9 +1311,31 @@ def main():
         st.image("https://img.icons8.com/color/96/bar-chart.png", width=48)
         st.markdown("## 📊 筛选器")
 
-        # Data info
-        st.caption(f"数据文件更新时间: {datetime.fromtimestamp(os.path.getmtime(os.path.join(os.path.dirname(__file__), '2026年海外客户投诉台账.xlsx'))).strftime('%Y-%m-%d %H:%M')}")
+        # ---- File Upload ----
+        st.markdown("### 📤 更新数据源")
+        uploaded_file = st.file_uploader(
+            "上传最新Excel文件",
+            type=['xlsx'],
+            help="上传后看板立即刷新。支持本地编辑后拖拽上传",
+        )
+        if uploaded_file:
+            st.success(f"✅ 已加载上传文件: {uploaded_file.name}")
 
+        if uploaded_file:
+            st.caption(f"当前数据: 📤 已上传文件")
+        else:
+            try:
+                file_time = datetime.fromtimestamp(os.path.getmtime(LOCAL_FILE))
+                st.caption(f"当前数据: GitHub 文件 ({file_time.strftime('%Y-%m-%d %H:%M')})")
+            except Exception:
+                st.caption("当前数据: GitHub 文件")
+
+    # Load data (outside sidebar so it applies to main area)
+    df = load_data(uploaded_file)
+
+    # Continue sidebar filters
+    with st.sidebar:
+        st.divider()
         filtered = apply_filters(df)
 
         st.divider()
@@ -1375,13 +1394,9 @@ def main():
             <p style="color:#aaa;margin:2px 0 0;font-size:12px;">数据源: {source} · 每30秒自动刷新</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <a href="{GSHEET_EDIT_URL}" target="_blank" style="background:#27AE60;color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;border:none;transition:all 0.2s;white-space:nowrap;"
+            <a href="{KDOCS_EDIT_URL}" target="_blank" style="background:#27AE60;color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;border:none;transition:all 0.2s;white-space:nowrap;"
                onmouseover="this.style.background='#219A52'" onmouseout="this.style.background='#27AE60'">
-               ✏️ 在线编辑源数据
-            </a>
-            <a href="{GSHEET_EDIT_URL}" target="_blank" style="background:rgba(255,255,255,0.12);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.25);transition:all 0.2s;white-space:nowrap;"
-               onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">
-               📄 查看源数据
+               ✏️ 金山在线文档
             </a>
         </div>
     </div>
