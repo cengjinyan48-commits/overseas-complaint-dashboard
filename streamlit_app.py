@@ -238,28 +238,26 @@ def make_status_pie(df):
 
 
 def make_fault_pareto(df):
-    """故障大类帕累托图"""
+    """故障大类帕累托图（标准垂直柱状图+累计折线）"""
     counts = df['故障大类'].value_counts().reset_index()
     counts.columns = ['故障大类','数量']
     total = counts['数量'].sum()
+    counts = counts.sort_values('数量', ascending=False)
     counts['累计占比'] = counts['数量'].cumsum() / total * 100
-    counts = counts.sort_values('数量', ascending=True)
 
-    colors = ['#E74C3C' if i >= len(counts)-3 else '#F39C12' if i >= len(counts)-6 else '#1890FF'
+    colors = ['#E74C3C' if i < 3 else '#F39C12' if i < 6 else '#1890FF'
               for i in range(len(counts))]
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
     fig.add_trace(go.Bar(
-        name='数量', y=counts['故障大类'], x=counts['数量'],
-        orientation='h', marker_color=colors,
+        name='投诉数量', x=counts['故障大类'], y=counts['数量'],
+        marker_color=colors,
         text=counts['数量'], textposition='outside',
     ), secondary_y=False)
 
-    # Reverse for line chart (descending order)
-    counts_desc = counts.iloc[::-1].reset_index(drop=True)
     fig.add_trace(go.Scatter(
-        name='累计占比', x=counts_desc['故障大类'], y=counts_desc['累计占比'],
+        name='累计占比', x=counts['故障大类'], y=counts['累计占比'],
         mode='lines+markers', line=dict(color='#9B59B6', width=2.5),
         marker=dict(size=8, symbol='diamond'),
     ), secondary_y=True)
@@ -270,12 +268,12 @@ def make_fault_pareto(df):
     fig.update_layout(
         title='故障大类帕累托分析',
         height=400,
-        margin=dict(l=10, r=10, t=40, b=10),
+        margin=dict(l=10, r=10, t=40, b=40),
         legend=dict(orientation='h', y=-0.15),
-        hovermode='y unified',
+        xaxis=dict(tickangle=-35, tickfont=dict(size=11)),
     )
-    fig.update_xaxes(title_text="条数", secondary_y=False)
-    fig.update_xaxes(title_text="累计占比 (%)", range=[0, 105], secondary_y=True)
+    fig.update_yaxes(title_text="投诉数量", secondary_y=False)
+    fig.update_yaxes(title_text="累计占比 (%)", range=[0, 105], secondary_y=True)
     return fig
 
 
