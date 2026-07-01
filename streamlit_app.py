@@ -82,14 +82,14 @@ def _process_raw_df(df):
     return df
 
 
-def load_data(uploaded_file=None):
+def load_data(uploaded_bytes=None):
     """加载数据: 上传文件 > 本地Excel备选"""
     source_label = ""
 
-    if uploaded_file is not None:
+    if uploaded_bytes is not None:
         # User uploaded file via sidebar
         try:
-            df = pd.read_excel(uploaded_file, sheet_name='所有客诉', header=1)
+            df = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name='所有客诉', header=1)
             source_label = "📤 已上传文件"
         except Exception:
             st.error("❌ 无法读取上传的文件，请确认格式正确")
@@ -1311,27 +1311,44 @@ def main():
         st.image("https://img.icons8.com/color/96/bar-chart.png", width=48)
         st.markdown("## 📊 筛选器")
 
-        # ---- File Upload ----
-        st.markdown("### 📤 更新数据源")
+        # ---- File Upload / Data Sync ----
+        st.markdown("### 📤 同步最新数据")
+
+        # Data freshness indicator
+        if 'data_update_time' not in st.session_state:
+            st.session_state.data_update_time = datetime.now()
+
         uploaded_file = st.file_uploader(
-            "上传最新Excel文件",
+            "从金山文档导出Excel后拖拽上传",
             type=['xlsx'],
-            help="上传后看板立即刷新。支持本地编辑后拖拽上传",
+            help="金山文档 → 导出为Excel → 拖到此处 → 看板立即刷新",
+            key='excel_uploader',
         )
         if uploaded_file:
-            st.success(f"✅ 已加载上传文件: {uploaded_file.name}")
-
-        if uploaded_file:
-            st.caption(f"当前数据: 📤 已上传文件")
+            st.session_state.data_update_time = datetime.now()
+            # Save bytes so we can read multiple times
+            st.session_state.uploaded_bytes = uploaded_file.getvalue()
+            st.success(f"✅ 数据已同步！刷新中...")
         else:
+            st.session_state.uploaded_bytes = None
+
+        # Show data source & freshness
+        if uploaded_file is None:
+            st.info("""
+            **💡 同步步骤：**
+            1. 点击顶部 **「✏️ 金山在线文档」**
+            2. 金山内编辑 → **导出为 Excel**
+            3. 拖拽文件到上方上传框
+            """)
             try:
                 file_time = datetime.fromtimestamp(os.path.getmtime(LOCAL_FILE))
-                st.caption(f"当前数据: GitHub 文件 ({file_time.strftime('%Y-%m-%d %H:%M')})")
+                st.caption(f"📂 当前读取: GitHub 文件 ({file_time.strftime('%Y-%m-%d %H:%M')})")
             except Exception:
-                st.caption("当前数据: GitHub 文件")
+                st.caption("📂 当前读取: GitHub 文件")
 
-    # Load data (outside sidebar so it applies to main area)
-    df = load_data(uploaded_file)
+    # Load data from session state or local file
+    upload_bytes = st.session_state.get('uploaded_bytes')
+    df = load_data(upload_bytes)
 
     # Continue sidebar filters
     with st.sidebar:
