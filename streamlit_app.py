@@ -851,16 +851,19 @@ def generate_export_ppt(df, now, template_bytes=None):
         prs = Presentation(io.BytesIO(template_bytes))
         content_layout = _find_content_layout(prs)
 
-        # Extract fonts from template
+        # Extract fonts BEFORE removing slides
         PPT_FONT = 'Microsoft YaHei'
-        for slide in prs.slides[:1]:
-            for shape in slide.shapes:
-                if shape.has_text_frame:
-                    for p in shape.text_frame.paragraphs:
-                        for run in p.runs:
-                            if run.font.name:
-                                PPT_FONT = run.font.name
-                                break
+        try:
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for p in shape.text_frame.paragraphs:
+                            for run in p.runs:
+                                if run.font.name:
+                                    PPT_FONT = run.font.name
+                                    break
+        except Exception:
+            pass
         PPT_DARK_BG = RGBColor(0x1A, 0x1A, 0x2E)
         PPT_PRIMARY = RGBColor(0xE6, 0x00, 0x12)
         PPT_LOGO_BLOB = None
