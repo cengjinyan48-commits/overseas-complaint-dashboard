@@ -552,18 +552,38 @@ def generate_export_zip(df, now):
 # ============================================================
 # Chinese font management (runtime download for Streamlit Cloud)
 _CN_FONT_PATH = '/tmp/wqy-microhei.ttc'
-_FONT_URL = 'https://github.com/anthonyfok/fonts-wqy-microhei/raw/master/wqy-microhei.ttc'
+_FONT_URLS = [
+    'https://github.com/anthonyfok/fonts-wqy-microhei/raw/master/wqy-microhei.ttc',
+    'https://raw.githubusercontent.com/anthonyfok/fonts-wqy-microhei/master/wqy-microhei.ttc',
+]
 
 def _download_cn_font():
     """Download Chinese font at runtime if not available"""
-    if os.path.exists(_CN_FONT_PATH):
+    if os.path.exists(_CN_FONT_PATH) and os.path.getsize(_CN_FONT_PATH) > 100000:
         return _CN_FONT_PATH
-    try:
-        urllib.request.urlretrieve(_FONT_URL, _CN_FONT_PATH)
-        if os.path.exists(_CN_FONT_PATH) and os.path.getsize(_CN_FONT_PATH) > 100000:
-            return _CN_FONT_PATH
-    except Exception:
-        pass
+
+    # Clear matplotlib font cache so it picks up new fonts
+    import glob
+    for cache in glob.glob('/tmp/matplotlib-*') + glob.glob('/home/*/.cache/matplotlib/*'):
+        try:
+            os.remove(cache)
+        except Exception:
+            pass
+
+    for url in _FONT_URLS:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+                if len(data) > 100000:
+                    with open(_CN_FONT_PATH, 'wb') as f:
+                        f.write(data)
+                    # Register font with matplotlib
+                    fm.fontManager.addfont(_CN_FONT_PATH)
+                    fm._load_fontmanager(try_read_cache=False)
+                    return _CN_FONT_PATH
+        except Exception:
+            continue
     return None
 
 
@@ -791,29 +811,88 @@ def extract_template_assets(template_bytes):
     return assets
 
 
-def generate_export_ppt(df, now, template_assets=None):
-    """生成 PPT 数据分析报告"""
+def _find_content_layout(prs):
+    """Find the best slide layout for content pages from the template"""
+    # Prefer layouts with '标题' or 'title' in name and placeholders
+    candidates = []
+    for layout in prs.slide_layouts:
+        name = layout.name.lower()
+        score = 0
+        if '标题' in name or 'title' in name:
+            score += 3
+        if len(layout.placeholders) >= 1:
+            score += len(layout.placeholders)
+        if '空白' in name or 'blank' in name:
+            score += 1
+        if score > 0:
+            candidates.append((score, layout))
+    candidates.sort(key=lambda x: -x[0])
+    if candidates:
+        return candidates[0][1]
+    # Fallback: first layout with at least 1 placeholder
+    for layout in prs.slide_layouts:
+        if len(layout.placeholders) >= 1:
+            return layout
+    return prs.slide_layouts[0]
+
+
+def generate_export_ppt(df, now, template_bytes=None):
+    """生成 PPT 数据分析报告
+    - If template_bytes provided: use template as base, preserve all design
+    - Otherwise: generate from scratch with default style
+    """
     global CN_FONT_PROP, PPT_FONT, PPT_DARK_BG, PPT_PRIMARY, PPT_LOGO_BLOB
     CN_FONT_PROP = _setup_cn_font()
 
-    # Apply template assets to globals
-    ta = template_assets or {}
-    if ta.get('has_template'):
-        PPT_FONT = ta.get('title_font', 'Microsoft YaHei')
-        PPT_PRIMARY = ta.get('primary_color', RGBColor(0xE6, 0x00, 0x12))
-        PPT_DARK_BG = ta.get('dark_bg', RGBColor(0x1A, 0x1A, 0x2E))
-        PPT_LOGO_BLOB = ta.get('logo_blob')
+    USING_TEMPLATE = template_bytes is not None
+
+    if USING_TEMPLATE:
+        # ---- Template-based mode: use uploaded .pptx as base ----
+        prs = Presentation(io.BytesIO(template_bytes))
+        content_layout = _find_content_layout(prs)
+
+        # Extract fonts from template
+        PPT_FONT = 'Microsoft YaHei'
+        for slide in prs.slides[:1]:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for p in shape.text_frame.paragraphs:
+                        for run in p.runs:
+                            if run.font.name:
+                                PPT_FONT = run.font.name
+                                break
+        PPT_DARK_BG = RGBColor(0x1A, 0x1A, 0x2E)
+        PPT_PRIMARY = RGBColor(0xE6, 0x00, 0x12)
+        PPT_LOGO_BLOB = None
+
+        # Remove all existing slides (keep layouts, masters, theme)
+        sldIdLst = prs.slides._sldIdLst
+        ns = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+        while len(sldIdLst) > 0:
+            rId = sldIdLst[0].get(ns + 'id')
+            if rId:
+                try:
+                    prs.part.drop_rel(rId)
+                except Exception:
+                    pass
+            sldIdLst.remove(sldIdLst[0])
+
     else:
+        # ---- From-scratch mode ----
         PPT_FONT = 'Microsoft YaHei'
         PPT_PRIMARY = RGBColor(0x18, 0x90, 0xFF)
         PPT_DARK_BG = RGBColor(0x1A, 0x1A, 0x2E)
         PPT_LOGO_BLOB = None
 
-    prs = Presentation()
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
+        prs = Presentation()
+        prs.slide_width = Inches(13.333)
+        prs.slide_height = Inches(7.5)
+        content_layout = None  # Use blank slide layout
 
     total = len(df)
+
+    # Layout to use for content slides
+    slide_layout = content_layout if content_layout else prs.slide_layouts[6]
     done = len(df[df['结案状态'].isin(['结案','关闭'])])
     rate = round(done / total * 100, 1) if total > 0 else 0
     pending = len(df[~df['结案状态'].isin(['结案','关闭'])])
@@ -824,7 +903,7 @@ def generate_export_ppt(df, now, template_assets=None):
     # ================================================================
     # Slide 1: 封面
     # ================================================================
-    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+    slide = prs.slides.add_slide(slide_layout)  # blank
     bg = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE, Inches(0), Inches(0),
         prs.slide_width, prs.slide_height
@@ -870,7 +949,7 @@ def generate_export_ppt(df, now, template_assets=None):
     # ================================================================
     # Slide 2: 执行摘要 - KPI
     # ================================================================
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(slide_layout)
     _add_slide_title(slide, "📊 执行摘要 — 关键指标概览", prs)
 
     kpi_data = [
@@ -932,7 +1011,7 @@ def generate_export_ppt(df, now, template_assets=None):
     # ================================================================
     # Slide 3: 区域分布 - 分公司 + 国家TOP10
     # ================================================================
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(slide_layout)
     _add_slide_title(slide, "🌍 区域分布分析 — 分公司 & 国家/地区", prs)
 
     # Branch chart
@@ -964,7 +1043,7 @@ def generate_export_ppt(df, now, template_assets=None):
     # ================================================================
     # Slide 4: 时间趋势 + 结案状态
     # ================================================================
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(slide_layout)
     _add_slide_title(slide, "📈 时间趋势 & 结案状态分析", prs)
 
     # Monthly trend table
@@ -1001,7 +1080,7 @@ def generate_export_ppt(df, now, template_assets=None):
     # ================================================================
     # Slide 5: 故障分析 — 帕累托 + 故障×机型交叉
     # ================================================================
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(slide_layout)
     _add_slide_title(slide, "🔍 故障分析 — 帕累托 & 故障×机型交叉", prs)
 
     # Fault pareto chart
@@ -1036,7 +1115,7 @@ def generate_export_ppt(df, now, template_assets=None):
     # ================================================================
     # Slide 6: 质量管理 — 跟进人 + 8D + 周期
     # ================================================================
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(slide_layout)
     _add_slide_title(slide, "👤 质量管理 — 跟进人 & 8D报告 & 处理周期", prs)
 
     # Follower chart
@@ -1093,7 +1172,7 @@ def generate_export_ppt(df, now, template_assets=None):
     # ================================================================
     # Slide 7: 超期未结案预警
     # ================================================================
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(slide_layout)
     _add_slide_title(slide, "🚨 超期未结案预警 & 分公司×状态交叉表", prs)
 
     # Overdue warnings
@@ -1131,7 +1210,7 @@ def generate_export_ppt(df, now, template_assets=None):
     # ================================================================
     # Slide 8: 建议与总结
     # ================================================================
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide = prs.slides.add_slide(slide_layout)
     _add_slide_title(slide, "💡 总结与改进建议", prs)
 
     recommendations = [
@@ -1222,16 +1301,17 @@ def main():
             help="上传公司PPT模板，导出报告将自动提取Logo、配色、字体并应用",
         )
         if uploaded_template:
-            template_assets = extract_template_assets(uploaded_template.read())
+            tpl_bytes = uploaded_template.read()
+            template_assets = extract_template_assets(tpl_bytes)
             if template_assets['has_template']:
-                st.success(f"✅ 已提取模板 | Logo: {'有' if template_assets['logo_blob'] else '无'} | 字体: {template_assets['title_font']}")
+                st.success(f"✅ 模板已识别 | Logo: {'有' if template_assets['logo_blob'] else '无'} | 字体: {template_assets['title_font']} | 将作为底板使用")
             else:
-                st.warning("未能识别模板元素，将使用默认风格")
-                template_assets = None
+                st.warning("未能识别模板，将使用默认风格")
+                tpl_bytes = None
         else:
-            template_assets = None
+            tpl_bytes = None
 
-        export_ppt = generate_export_ppt(filtered, now, template_assets)
+        export_ppt = generate_export_ppt(filtered, now, tpl_bytes)
         st.download_button(
             label="📊 导出数据分析报告 (PPT)",
             data=export_ppt,
