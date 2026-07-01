@@ -1305,7 +1305,7 @@ def generate_export_ppt(df, now, template_bytes=None):
 
 
 def main():
-    now = datetime.now(BJT)
+    now = pd.Timestamp(datetime.now(BJT))
 
     # ---- Sidebar ----
     with st.sidebar:
