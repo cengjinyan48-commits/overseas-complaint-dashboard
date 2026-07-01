@@ -1325,11 +1325,26 @@ def main():
         st.caption("8页PPT：封面 + KPI摘要 + 区域/趋势/故障/质量分析 + 改进建议")
 
     # ---- Main Area ----
-    # Header
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);padding:20px 30px;border-radius:12px;margin-bottom:16px;">
-        <h1 style="color:#fff;margin:0;font-size:26px;">📊 2026年海外客户投诉数据看板</h1>
-        <p style="color:#aaa;margin:4px 0 0;font-size:13px;">Overseas Customer Complaint Dashboard · 基于 Streamlit + Plotly 构建</p>
+    # Header with source file link
+    raw_url = "https://raw.githubusercontent.com/cengjinyan48-commits/overseas-complaint-dashboard/main/2026%E5%B9%B4%E6%B5%B7%E5%A4%96%E5%AE%A2%E6%88%B7%E6%8A%95%E8%AF%89%E5%8F%B0%E8%B4%A6.xlsx"
+    online_view_url = f"https://view.officeapps.live.com/op/view.aspx?src={raw_url}"
+
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);padding:16px 30px;border-radius:12px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+            <h1 style="color:#fff;margin:0;font-size:24px;">📊 2026年海外客户投诉数据看板</h1>
+            <p style="color:#aaa;margin:2px 0 0;font-size:12px;">Overseas Customer Complaint Dashboard · Streamlit + Plotly</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <a href="{online_view_url}" target="_blank" style="background:rgba(255,255,255,0.12);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.25);transition:all 0.2s;white-space:nowrap;"
+               onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">
+               📄 在线查看源数据
+            </a>
+            <a href="{raw_url}" target="_blank" style="background:rgba(255,255,255,0.12);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.25);transition:all 0.2s;white-space:nowrap;"
+               onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">
+               ⬇️ 下载源数据文件
+            </a>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
