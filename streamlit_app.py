@@ -39,7 +39,7 @@ st.set_page_config(
 # Data Source Config
 # ============================================================
 LOCAL_FILE = os.path.join(os.path.dirname(__file__), "2026年海外客户投诉台账.xlsx")
-KDOCS_EDIT_URL = "https://www.kdocs.cn/"  # 金山文档链接（导入后可替换此URL）
+KDOCS_EDIT_URL = "https://www.kdocs.cn/l/cjP6zkIRj17V"
 CSV_COLS = [
     '编号','分公司','国家或地区','是否大客户','投诉日期','应结案日期','实际完成日期',
     '完成周期（天）','机型属性','故障比例','问题描述','客户诉求','跟进人','处理类型',
