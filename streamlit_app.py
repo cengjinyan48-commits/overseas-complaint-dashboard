@@ -550,30 +550,37 @@ def generate_export_zip(df, now):
 # ============================================================
 # Try to configure Chinese font
 def _setup_cn_font():
-    """尝试配置中文字体，返回可用的字体名"""
-    candidates = [
-        'WenQuanYi Micro Hei', 'WenQuanYi Zen Hei',  # Linux (Streamlit Cloud)
-        'PingFang SC', 'Heiti SC', 'STHeiti',          # macOS
-        'SimHei', 'Microsoft YaHei',                    # Windows
-        'Arial Unicode MS', 'Noto Sans CJK SC', 'sans-serif',
+    """尝试配置中文字体，返回 FontProperties 对象"""
+    font_files = [
+        '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        '/System/Library/Fonts/PingFang.ttc',
+        '/System/Library/Fonts/STHeiti Light.ttc',
+        '/Library/Fonts/Arial Unicode.ttf',
+        'C:\\\\Windows\\\\Fonts\\\\msyh.ttc',
+        'C:\\\\Windows\\\\Fonts\\\\simhei.ttf',
     ]
+    for fp in font_files:
+        if os.path.exists(fp):
+            try:
+                return fm.FontProperties(fname=fp)
+            except Exception:
+                continue
+    candidates = ['WenQuanYi Micro Hei','PingFang SC','Heiti SC','SimHei','Microsoft YaHei','sans-serif']
+    try:
+        fm._load_fontmanager(try_read_cache=False)
+    except Exception:
+        pass
     available = [f.name for f in fm.fontManager.ttflist]
     for c in candidates:
         if c in available:
-            return c
-    # Fallback: rebuild font list and try again
-    try:
-        fm._load_fontmanager(try_read_cache=False)
-        available = [f.name for f in fm.fontManager.ttflist]
-        for c in candidates:
-            if c in available:
-                return c
-    except Exception:
-        pass
-    return 'sans-serif'
+            return fm.FontProperties(family=c)
+    return fm.FontProperties(family='sans-serif')
 
-CN_FONT = None  # Lazy init (for matplotlib charts)
-PPT_FONT = 'Microsoft YaHei'  # PPT text font name, widely available on Windows/Mac
+
+CN_FONT_PROP = None  # Lazy init
+PPT_FONT = 'Microsoft YaHei'
 
 
 def _chart_to_img(fig):
@@ -660,10 +667,10 @@ def _add_table(slide, left, top, width, height, headers, rows, col_widths=None):
 
 def _make_bar_chart(labels, values, title, color='#1890FF', highlight_n=0):
     """生成 matplotlib 柱状图 figure"""
-    global CN_FONT
-    if CN_FONT is None:
-        CN_FONT = _setup_cn_font()
-    plt.rcParams['font.family'] = CN_FONT
+    global CN_FONT_PROP
+    if CN_FONT_PROP is None:
+        CN_FONT_PROP = _setup_cn_font()
+    plt.rcParams['font.family'] = CN_FONT_PROP.get_name()
     plt.rcParams['axes.unicode_minus'] = False
 
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -691,8 +698,8 @@ def _make_bar_chart(labels, values, title, color='#1890FF', highlight_n=0):
 
 def generate_export_ppt(df, now):
     """生成 PPT 数据分析报告"""
-    global CN_FONT
-    CN_FONT = _setup_cn_font()
+    global CN_FONT_PROP
+    CN_FONT_PROP = _setup_cn_font()
 
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -803,9 +810,8 @@ def generate_export_ppt(df, now):
         p.font.size = Pt(13)
         p.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
         p.space_after = Pt(6)
-        if CN_FONT != 'sans-serif':
-            for run in p.runs:
-                run.font.name = CN_FONT
+        for run in p.runs:
+            run.font.name = PPT_FONT
 
     # ================================================================
     # Slide 3: 区域分布 - 分公司 + 国家TOP10
