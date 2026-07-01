@@ -36,21 +36,59 @@ st.set_page_config(
 )
 
 # ============================================================
-# Data Loading (cached)
+# Data Source Config
 # ============================================================
-@st.cache_data(ttl=3600)
-def load_data():
-    """从 Excel 读取并清洗数据"""
-    file_path = os.path.join(os.path.dirname(__file__), "2026年海外客户投诉台账.xlsx")
+GSHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRyd2UWVQaY1W3JcDilF4si3zB4ehRL3D4lIiN4c12NM3Ckv-UsK9mMV5OCE_20Iq-kvwZ8gf1eE3cN/pub?output=csv"
+GSHEET_EDIT_URL = "https://docs.google.com/spreadsheets/d/1rw-ZzbXnGxgsQPWB5cTp7SW20cDdK-PRLP2WcIOoxJk/edit?gid=695476880#gid=695476880"
+LOCAL_FILE = os.path.join(os.path.dirname(__file__), "2026年海外客户投诉台账.xlsx")
 
-    df = pd.read_excel(file_path, sheet_name='所有客诉', header=1)
+# ============================================================
+# Data Loading (cached, short TTL for near real-time)
+# ============================================================
+@st.cache_data(ttl=30)
+def load_data():
+    """从 Google Sheets 实时读取数据，本地 Excel 作为备选"""
+    df = None
+    source_label = ""
+
+    # 1. Try Google Sheets first
+    try:
+        df = pd.read_csv(GSHEET_CSV_URL, encoding='utf-8', skiprows=1)
+        # Verify it's valid data (has expected columns)
+        if '编号' in df.columns and len(df) > 10:
+            source_label = "Google Sheets (实时)"
+        else:
+            df = None
+    except Exception:
+        df = None
+
+    # 2. Fallback to local Excel
+    if df is None:
+        try:
+            df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1)
+            source_label = "本地 Excel"
+        except Exception:
+            st.error("❌ 无法加载数据源，请检查 Google Sheets 或本地文件")
+            st.stop()
+
     df = df.dropna(how='all')
-    df.columns = [
+
+    # Normalize columns (Google Sheets CSV might have slightly different headers)
+    col_map = {}
+    expected_cols = [
         '编号','分公司','国家或地区','是否大客户','投诉日期','应结案日期','实际完成日期',
         '完成周期（天）','机型属性','故障比例','问题描述','客户诉求','跟进人','处理类型',
         '结案状态','应急措施','原因分析','长期整改措施','责任单位','故障大类','品质负责人',
         '8D报告','8D措施点检','备注'
     ]
+    for c in df.columns:
+        c_stripped = c.strip().replace('\n','').replace('\r','')
+        for ec in expected_cols:
+            if c_stripped == ec or c_stripped == ec.replace('（','(').replace('）',')'):
+                col_map[c] = ec
+                break
+    if col_map:
+        df = df.rename(columns=col_map)
 
     # Strict filtering
     df['编号_num'] = pd.to_numeric(df['编号'], errors='coerce')
@@ -66,6 +104,8 @@ def load_data():
     df['故障比例'] = pd.to_numeric(df['故障比例'], errors='coerce')
     df['投诉月份'] = df['投诉日期'].dt.to_period('M').astype(str)
 
+    # Store source info for display
+    df.attrs['source'] = source_label
     return df
 
 
@@ -1326,23 +1366,22 @@ def main():
 
     # ---- Main Area ----
     # Header with source file link
-    raw_url = "https://raw.githubusercontent.com/cengjinyan48-commits/overseas-complaint-dashboard/main/2026%E5%B9%B4%E6%B5%B7%E5%A4%96%E5%AE%A2%E6%88%B7%E6%8A%95%E8%AF%89%E5%8F%B0%E8%B4%A6.xlsx"
-    online_view_url = f"https://view.officeapps.live.com/op/view.aspx?src={raw_url}"
+    source = df.attrs.get('source', '未知')
 
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);padding:16px 30px;border-radius:12px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
         <div>
             <h1 style="color:#fff;margin:0;font-size:24px;">📊 2026年海外客户投诉数据看板</h1>
-            <p style="color:#aaa;margin:2px 0 0;font-size:12px;">Overseas Customer Complaint Dashboard · Streamlit + Plotly</p>
+            <p style="color:#aaa;margin:2px 0 0;font-size:12px;">数据源: {source} · 每30秒自动刷新</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <a href="{online_view_url}" target="_blank" style="background:rgba(255,255,255,0.12);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.25);transition:all 0.2s;white-space:nowrap;"
-               onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">
-               📄 在线查看源数据
+            <a href="{GSHEET_EDIT_URL}" target="_blank" style="background:#27AE60;color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;border:none;transition:all 0.2s;white-space:nowrap;"
+               onmouseover="this.style.background='#219A52'" onmouseout="this.style.background='#27AE60'">
+               ✏️ 在线编辑源数据
             </a>
-            <a href="{raw_url}" target="_blank" style="background:rgba(255,255,255,0.12);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.25);transition:all 0.2s;white-space:nowrap;"
+            <a href="{GSHEET_EDIT_URL}" target="_blank" style="background:rgba(255,255,255,0.12);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.25);transition:all 0.2s;white-space:nowrap;"
                onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">
-               ⬇️ 下载源数据文件
+               📄 查看源数据
             </a>
         </div>
     </div>
