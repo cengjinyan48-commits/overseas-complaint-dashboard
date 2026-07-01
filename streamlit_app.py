@@ -13,6 +13,15 @@ from datetime import datetime
 import os
 import io
 import zipfile
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+from pptx import Presentation
+from pptx.util import Inches, Pt, Emu
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
 
 # ============================================================
 # Page Config
@@ -536,6 +545,496 @@ def generate_export_zip(df, now):
     return buf
 
 
+# ============================================================
+# PPT Export
+# ============================================================
+# Try to configure Chinese font
+def _setup_cn_font():
+    """尝试配置中文字体，返回可用的字体名"""
+    candidates = ['PingFang SC','Heiti SC','STHeiti','SimHei','Microsoft YaHei','Arial Unicode MS','WenQuanYi Zen Hei','Noto Sans CJK SC','sans-serif']
+    available = [f.name for f in fm.fontManager.ttflist]
+    for c in candidates:
+        if c in available:
+            return c
+    return 'sans-serif'
+
+CN_FONT = None  # Lazy init
+
+
+def _chart_to_img(fig):
+    """将 matplotlib figure 转为 PNG bytes"""
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=120, bbox_inches='tight',
+                facecolor='white', edgecolor='none')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+def _add_slide_title(slide, title_text, prs):
+    """添加幻灯片标题栏"""
+    title_box = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0), Inches(0),
+        prs.slide_width, Inches(0.7)
+    )
+    title_box.fill.solid()
+    title_box.fill.fore_color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    title_box.line.fill.background()
+    tf = title_box.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.text = title_text
+    p.font.size = Pt(22)
+    p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    p.font.bold = True
+    p.alignment = PP_ALIGN.LEFT
+    tf.margin_left = Inches(0.5)
+
+
+def _add_table(slide, left, top, width, height, headers, rows, col_widths=None):
+    """在幻灯片中添加格式化表格"""
+    n_rows = len(rows) + 1
+    n_cols = len(headers)
+    tbl_shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
+    tbl = tbl_shape.table
+
+    # Set column widths
+    if col_widths:
+        for i, w in enumerate(col_widths):
+            tbl.columns[i].width = w
+
+    # Header row
+    for i, h in enumerate(headers):
+        cell = tbl.cell(0, i)
+        cell.text = str(h)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+        for p in cell.text_frame.paragraphs:
+            p.font.size = Pt(9)
+            p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            p.font.bold = True
+            p.alignment = PP_ALIGN.CENTER
+
+    # Data rows
+    for r, row in enumerate(rows):
+        for c, val in enumerate(row):
+            cell = tbl.cell(r + 1, c)
+            cell.text = str(val)
+            if r % 2 == 0:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor(0xF5, 0xF7, 0xFA)
+            else:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            for p in cell.text_frame.paragraphs:
+                p.font.size = Pt(8)
+                p.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+                p.alignment = PP_ALIGN.CENTER
+
+    return tbl_shape
+
+
+def _make_bar_chart(labels, values, title, color='#1890FF', highlight_n=0):
+    """生成 matplotlib 柱状图 figure"""
+    global CN_FONT
+    if CN_FONT is None:
+        CN_FONT = _setup_cn_font()
+    plt.rcParams['font.family'] = CN_FONT
+    plt.rcParams['axes.unicode_minus'] = False
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    colors = [color] * len(labels)
+    if highlight_n > 0:
+        for i in range(min(highlight_n, len(labels))):
+            colors[-1 - i] = '#E74C3C'
+
+    bars = ax.barh(range(len(labels)), values, color=colors, height=0.6)
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_xlabel('Quantity', fontsize=9)
+    ax.set_title(title, fontsize=12, fontweight='bold')
+    ax.invert_yaxis()
+
+    for bar, val in zip(bars, values):
+        ax.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height()/2,
+                str(val), va='center', fontsize=9)
+
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    return fig
+
+
+def generate_export_ppt(df, now):
+    """生成 PPT 数据分析报告"""
+    global CN_FONT
+    CN_FONT = _setup_cn_font()
+
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+
+    total = len(df)
+    done = len(df[df['结案状态'].isin(['结案','关闭'])])
+    rate = round(done / total * 100, 1) if total > 0 else 0
+    pending = len(df[~df['结案状态'].isin(['结案','关闭'])])
+    cycle_avg = round(df['完成周期（天）'].dropna().mean(), 1)
+    overdue_count = len(df[~df['结案状态'].isin(['结案','关闭']) &
+                           df['应结案日期'].notna() & (df['应结案日期'] < now)])
+
+    # ================================================================
+    # Slide 1: 封面
+    # ================================================================
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+    bg = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0), Inches(0),
+        prs.slide_width, prs.slide_height
+    )
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    bg.line.fill.background()
+
+    # Title
+    txBox = slide.shapes.add_textbox(Inches(1.5), Inches(2.0), Inches(10), Inches(1.5))
+    tf = txBox.text_frame
+    p = tf.paragraphs[0]
+    p.text = "2026年海外客户投诉数据分析报告"
+    p.font.size = Pt(36)
+    p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    p.font.bold = True
+    p.alignment = PP_ALIGN.CENTER
+
+    p2 = tf.add_paragraph()
+    p2.text = "Overseas Customer Complaint Data Analysis"
+    p2.font.size = Pt(18)
+    p2.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
+    p2.alignment = PP_ALIGN.CENTER
+
+    # Date & info
+    txBox2 = slide.shapes.add_textbox(Inches(1.5), Inches(5.0), Inches(10), Inches(1))
+    tf2 = txBox2.text_frame
+    p3 = tf2.paragraphs[0]
+    p3.text = f"数据范围: 2026年1月-6月 | 有效记录: {total} 条 | 生成时间: {now.strftime('%Y-%m-%d %H:%M')}"
+    p3.font.size = Pt(12)
+    p3.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    p3.alignment = PP_ALIGN.CENTER
+
+    # ================================================================
+    # Slide 2: 执行摘要 - KPI
+    # ================================================================
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_slide_title(slide, "📊 执行摘要 — 关键指标概览", prs)
+
+    kpi_data = [
+        ('📋 总投诉量', f'{total} 条', '2026年1-6月累计'),
+        ('✅ 结案率', f'{rate}%', f'结案+关闭共{done}条'),
+        ('⏱️ 平均处理周期', f'{cycle_avg} 天', '基于已完成记录'),
+        ('⚠️ 未结案', f'{pending} 条', '含暂停/未结案'),
+        ('🔴 超期未结案', f'{overdue_count} 条', '已超应结案日期'),
+    ]
+
+    for i, (label, value, sub) in enumerate(kpi_data):
+        left = Inches(0.8 + i * 2.5)
+        top = Inches(1.2)
+        # Card background
+        card = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, left, top, Inches(2.2), Inches(1.5)
+        )
+        card.fill.solid()
+        card.fill.fore_color.rgb = RGBColor(0xF0, 0xF2, 0xF5)
+        card.line.fill.background()
+
+        # Value
+        txBox = slide.shapes.add_textbox(left + Inches(0.2), top + Inches(0.3), Inches(1.8), Inches(0.6))
+        tf = txBox.text_frame
+        p = tf.paragraphs[0]
+        p.text = label
+        p.font.size = Pt(11)
+        p.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+        p2 = tf.add_paragraph()
+        p2.text = value
+        p2.font.size = Pt(28)
+        p2.font.color.rgb = RGBColor(0xE7, 0x4C, 0x3C) if '🔴' in label else RGBColor(0x18, 0x90, 0xFF)
+        p2.font.bold = True
+        p3 = tf.add_paragraph()
+        p3.text = sub
+        p3.font.size = Pt(9)
+        p3.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+
+    # Summary text
+    txBox = slide.shapes.add_textbox(Inches(0.8), Inches(3.2), Inches(11.5), Inches(3.5))
+    tf = txBox.text_frame
+    tf.word_wrap = True
+    summary_items = [
+        f"● 2026年上半年累计受理海外客户投诉 {total} 条，整体结案率 {rate}%，尚有 {pending} 条未完结。",
+        f"● 投诉高峰集中在3-5月（共40条），6月回落至7条。",
+        f"● 装配问题是头号故障类型（{len(df[df['故障大类']=='装配问题'])}条，占{round(len(df[df['故障大类']=='装配问题'])/total*100,1)}%），需重点关注生产装配环节。",
+        f"● 变频机型投诉占比超50%，美国和中国台湾是投诉最多的市场。",
+        f"● {overdue_count} 条超期未结案需紧急处理，其中编号1（澳大利亚）已超期160+天。",
+    ]
+    for item in summary_items:
+        p = tf.add_paragraph()
+        p.text = item
+        p.font.size = Pt(13)
+        p.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+        p.space_after = Pt(6)
+        if CN_FONT != 'sans-serif':
+            for run in p.runs:
+                run.font.name = CN_FONT
+
+    # ================================================================
+    # Slide 3: 区域分布 - 分公司 + 国家TOP10
+    # ================================================================
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_slide_title(slide, "🌍 区域分布分析 — 分公司 & 国家/地区", prs)
+
+    # Branch chart
+    branch = df['分公司'].value_counts()
+    branch_labels = list(branch.index)
+    branch_vals = list(branch.values)
+    fig1 = _make_bar_chart(branch_labels, branch_vals, '分公司投诉分布', highlight_n=3)
+    img1 = _chart_to_img(fig1)
+    slide.shapes.add_picture(img1, Inches(0.3), Inches(1.0), Inches(6.2), Inches(3.0))
+
+    # Branch table
+    branch_rows = [(n, v, f'{v/total*100:.1f}%') for n, v in zip(branch_labels, branch_vals)]
+    _add_table(slide, Inches(0.3), Inches(4.2), Inches(6.2), Inches(2.8),
+               ['分公司','投诉数量','占比'], branch_rows)
+
+    # Country chart
+    country = df['国家或地区'].value_counts().nlargest(10)
+    country_labels = list(country.index)
+    country_vals = list(country.values)
+    fig2 = _make_bar_chart(country_labels, country_vals, '国家/地区投诉量 TOP10', highlight_n=3)
+    img2 = _chart_to_img(fig2)
+    slide.shapes.add_picture(img2, Inches(6.8), Inches(1.0), Inches(6.2), Inches(3.0))
+
+    # Country table
+    country_rows = [(n, v, f'{v/total*100:.1f}%') for n, v in zip(country_labels, country_vals)]
+    _add_table(slide, Inches(6.8), Inches(4.2), Inches(6.2), Inches(2.8),
+               ['国家/地区','投诉数量','占比'], country_rows)
+
+    # ================================================================
+    # Slide 4: 时间趋势 + 结案状态
+    # ================================================================
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_slide_title(slide, "📈 时间趋势 & 结案状态分析", prs)
+
+    # Monthly trend table
+    df['投诉月份'] = df['投诉日期'].dt.to_period('M').astype(str)
+    monthly = df.groupby('投诉月份').agg(
+        投诉量=('编号_int','count'),
+        结案量=('结案状态', lambda x: x.isin(['结案','关闭']).sum())
+    ).reset_index()
+    monthly['结案率'] = (monthly['结案量'] / monthly['投诉量'] * 100).round(1)
+    monthly_rows = [(r['投诉月份'], r['投诉量'], r['结案量'], f"{r['结案率']}%")
+                    for _, r in monthly.iterrows()]
+    _add_table(slide, Inches(0.5), Inches(1.0), Inches(5.5), Inches(2.0),
+               ['月份','投诉量','结案量','结案率'], monthly_rows)
+
+    # Status pie table
+    status = df['结案状态'].value_counts()
+    status_rows = [(n, v, f'{v/total*100:.1f}%') for n, v in status.items()]
+    _add_table(slide, Inches(0.5), Inches(3.5), Inches(3.0), Inches(1.8),
+               ['结案状态','数量','占比'], status_rows)
+
+    # VIP table
+    vip = df['是否大客户'].value_counts()
+    vip_rows = [(n, v, f'{v/total*100:.1f}%') for n, v in vip.items()]
+    _add_table(slide, Inches(4.0), Inches(3.5), Inches(3.0), Inches(1.3),
+               ['客户类型','数量','占比'], vip_rows)
+
+    # Model type table
+    model = df['机型属性'].value_counts()
+    model_rows = [(n, v, f'{v/total*100:.1f}%') for n, v in model.items()]
+    _add_table(slide, Inches(7.5), Inches(1.0), Inches(5.5), Inches(3.5),
+               ['机型属性','数量','占比'], model_rows,
+               col_widths=[Inches(2.2), Inches(1.5), Inches(1.5)])
+
+    # ================================================================
+    # Slide 5: 故障分析 — 帕累托 + 故障×机型交叉
+    # ================================================================
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_slide_title(slide, "🔍 故障分析 — 帕累托 & 故障×机型交叉", prs)
+
+    # Fault pareto chart
+    fault = df['故障大类'].value_counts()
+    fault_labels = list(fault.index)
+    fault_vals = list(fault.values)
+    fig3 = _make_bar_chart(fault_labels, fault_vals, '故障大类分布', highlight_n=3)
+    img3 = _chart_to_img(fig3)
+    slide.shapes.add_picture(img3, Inches(0.3), Inches(1.0), Inches(6.2), Inches(3.2))
+
+    # Fault pareto table
+    fault_total = sum(fault_vals)
+    cum = 0
+    fault_rows = []
+    for n, v in zip(fault_labels, fault_vals):
+        cum += v
+        fault_rows.append((n, v, f'{v/fault_total*100:.1f}%', f'{cum/fault_total*100:.1f}%'))
+    _add_table(slide, Inches(0.3), Inches(4.4), Inches(6.2), Inches(2.8),
+               ['故障大类','数量','占比','累计占比'], fault_rows)
+
+    # Cross table: fault × model (TOP rows)
+    cross = pd.crosstab(df['故障大类'], df['机型属性'])
+    cross['合计'] = cross.sum(axis=1)
+    cross = cross.sort_values('合计', ascending=False).head(8)
+    cross_headers = ['故障大类'] + list(cross.columns)
+    cross_rows = []
+    for idx, row in cross.iterrows():
+        cross_rows.append([idx] + [int(row[c]) for c in cross.columns])
+    _add_table(slide, Inches(6.8), Inches(1.0), Inches(6.2), Inches(3.5),
+               cross_headers, cross_rows)
+
+    # ================================================================
+    # Slide 6: 质量管理 — 跟进人 + 8D + 周期
+    # ================================================================
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_slide_title(slide, "👤 质量管理 — 跟进人 & 8D报告 & 处理周期", prs)
+
+    # Follower chart
+    follower = df['跟进人'].value_counts().nlargest(8)
+    f_labels = list(follower.index)
+    f_vals = list(follower.values)
+    fig4 = _make_bar_chart(f_labels, f_vals, '跟进人工作量 TOP8', highlight_n=2)
+    img4 = _chart_to_img(fig4)
+    slide.shapes.add_picture(img4, Inches(0.3), Inches(1.0), Inches(4.2), Inches(2.8))
+
+    # Follower table
+    f_rows = [(n, v, f'{v/total*100:.1f}%') for n, v in zip(f_labels, f_vals)]
+    _add_table(slide, Inches(0.3), Inches(4.0), Inches(4.2), Inches(2.5),
+               ['跟进人','处理数量','占比'], f_rows)
+
+    # 8D stats
+    d8_yes = len(df[df['8D报告'] == '有'])
+    d8_no = len(df[df['8D报告'] == '无'])
+    d8_rate = round(d8_yes / total * 100, 1) if total > 0 else 0
+    txBox = slide.shapes.add_textbox(Inches(5.0), Inches(1.2), Inches(4.0), Inches(2.5))
+    tf = txBox.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.text = "8D报告覆盖率"
+    p.font.size = Pt(14)
+    p.font.bold = True
+    p.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+    p2 = tf.add_paragraph()
+    p2.text = f"{d8_rate}%"
+    p2.font.size = Pt(42)
+    p2.font.bold = True
+    p2.font.color.rgb = RGBColor(0x27, 0xAE, 0x60) if d8_rate >= 80 else RGBColor(0xF3, 0x9C, 0x12)
+    p3 = tf.add_paragraph()
+    p3.text = f"已出具: {d8_yes} 条 | 未出具: {d8_no} 条 | 其他: {total - d8_yes - d8_no} 条"
+    p3.font.size = Pt(11)
+    p3.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+    # QA table
+    qa = df['品质负责人'].value_counts()
+    qa_rows = [(n, v, f'{v/total*100:.1f}%') for n, v in qa.items()]
+    _add_table(slide, Inches(5.0), Inches(4.4), Inches(3.8), Inches(2.0),
+               ['品质负责人','负责数量','占比'], qa_rows)
+
+    # Cycle stats
+    cycle = df['完成周期（天）'].dropna()
+    cycle_rows = [
+        ('记录数', len(cycle)), ('平均值', f'{cycle.mean():.1f} 天'),
+        ('中位数', f'{cycle.median():.0f} 天'), ('最小值', f'{cycle.min():.0f} 天'),
+        ('最大值', f'{cycle.max():.0f} 天'), ('标准差', f'{cycle.std():.1f} 天'),
+    ]
+    _add_table(slide, Inches(9.2), Inches(1.0), Inches(3.8), Inches(2.0),
+               ['完成周期指标','数值'], cycle_rows)
+
+    # ================================================================
+    # Slide 7: 超期未结案预警
+    # ================================================================
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_slide_title(slide, "🚨 超期未结案预警 & 分公司×状态交叉表", prs)
+
+    # Overdue warnings
+    overdue = df[~df['结案状态'].isin(['结案','关闭']) &
+                 df['应结案日期'].notna() & (df['应结案日期'] < now)]
+    if len(overdue) > 0:
+        od_rows = []
+        for _, r in overdue.iterrows():
+            days = (now - r['应结案日期']).days
+            desc = str(r['问题描述'])[:80] if pd.notna(r['问题描述']) else ''
+            od_rows.append((r['编号_int'], r['国家或地区'],
+                           r['应结案日期'].strftime('%Y-%m-%d'), f'{days}天', desc))
+        _add_table(slide, Inches(0.3), Inches(1.0), Inches(7.0), Inches(min(3.5, 0.4 * len(od_rows) + 0.5)),
+                   ['编号','国家','应结案日期','超期天数','问题描述'], od_rows,
+                   col_widths=[Inches(0.6), Inches(1.0), Inches(1.2), Inches(1.0), Inches(3.2)])
+    else:
+        txBox = slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(6), Inches(1))
+        tf = txBox.text_frame
+        p = tf.paragraphs[0]
+        p.text = "✅ 当前无超期未结案记录"
+        p.font.size = Pt(16)
+        p.font.color.rgb = RGBColor(0x27, 0xAE, 0x60)
+
+    # Cross table
+    cross = pd.crosstab(df['分公司'], df['结案状态'])
+    cross['合计'] = cross.sum(axis=1)
+    cross = cross.sort_values('合计', ascending=False)
+    cross_headers = ['分公司'] + list(cross.columns)
+    cross_rows_data = []
+    for idx, row in cross.iterrows():
+        cross_rows_data.append([idx] + [int(row[c]) for c in cross.columns])
+    _add_table(slide, Inches(7.8), Inches(1.0), Inches(5.2), Inches(min(3.5, 0.35 * len(cross) + 0.5)),
+               cross_headers, cross_rows_data)
+
+    # ================================================================
+    # Slide 8: 建议与总结
+    # ================================================================
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_slide_title(slide, "💡 总结与改进建议", prs)
+
+    recommendations = [
+        ("1. 重点治理装配问题",
+         f"装配问题占总投诉的{round(len(df[df['故障大类']=='装配问题'])/total*100,1)}%，建议对中山一厂、广州工厂、印尼工厂开展装配工序专项审查，"
+         "加强首检和巡检力度，对频繁出现装配问题的产线进行停线整顿。"),
+        ("2. 变频产品专项质量提升",
+         f"变频整机+散件投诉占总量的71.1%，建议成立变频产品专项质量小组，重点关注裂管/漏氟、电控、外观不良等高频故障。"),
+        ("3. 紧急处理超期未结案",
+         f"当前有{overdue_count}条超期未结案，最长的已超期160+天（编号1-澳大利亚），建议逐条制定结案计划，明确责任人和完成时间。"),
+        ("4. 提升8D报告覆盖率",
+         f"当前8D报告覆盖率仅{d8_rate}%，建议强制要求所有已结案投诉完成8D报告归档，品质部门每月通报各负责人8D完成率。"),
+        ("5. 优化装柜与包装",
+         "装柜问题和包装破损合计占比11.9%，建议优化货柜装载方案，加强包装强度测试，特别是针对窗机和大宗散件的包装防护。"),
+        ("6. 加强重点市场客诉响应",
+         "美国（9条）和中国台湾（7条）是投诉最多的市场，建议为这两个市场配置专属品质对接窗口，缩短响应周期，降低客诉升级风险。"),
+    ]
+
+    y_pos = 1.0
+    for title, detail in recommendations:
+        txBox = slide.shapes.add_textbox(Inches(0.8), Inches(y_pos), Inches(11.5), Inches(1.0))
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = title
+        p.font.size = Pt(13)
+        p.font.bold = True
+        p.font.color.rgb = RGBColor(0x18, 0x90, 0xFF)
+        p2 = tf.add_paragraph()
+        p2.text = detail
+        p2.font.size = Pt(10)
+        p2.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+        y_pos += 1.05
+
+    # Footer
+    txBox = slide.shapes.add_textbox(Inches(0.8), Inches(6.8), Inches(11.5), Inches(0.5))
+    tf = txBox.text_frame
+    p = tf.paragraphs[0]
+    p.text = f"数据来源: 2026年海外客户投诉台账.xlsx | 生成时间: {now.strftime('%Y-%m-%d %H:%M')} | 有效记录: {total} 条"
+    p.font.size = Pt(9)
+    p.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+    p.alignment = PP_ALIGN.CENTER
+
+    # Save
+    buf = io.BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf
+
+
 def main():
     # Load data
     df = load_data()
@@ -560,13 +1059,23 @@ def main():
 
         export_zip = generate_export_zip(filtered, now)
         st.download_button(
-            label="⬇️ 一键导出全部分析数据 (ZIP)",
+            label="⬇️ 导出全部分析数据 (ZIP)",
             data=export_zip,
             file_name=f"海外客诉分析数据_{now.strftime('%Y%m%d_%H%M')}.zip",
             mime="application/zip",
             use_container_width=True,
         )
-        st.caption("包含 14 个CSV文件：明细数据 + 各维度统计 + 交叉表 + 超期预警")
+        st.caption("14个CSV：明细数据 + 各维度统计 + 交叉表 + 超期预警")
+
+        export_ppt = generate_export_ppt(filtered, now)
+        st.download_button(
+            label="📊 导出数据分析报告 (PPT)",
+            data=export_ppt,
+            file_name=f"海外客诉分析报告_{now.strftime('%Y%m%d_%H%M')}.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+        )
+        st.caption("8页PPT：封面 + KPI摘要 + 区域/趋势/故障/质量分析 + 改进建议")
 
     # ---- Main Area ----
     # Header
