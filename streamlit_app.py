@@ -39,8 +39,6 @@ st.set_page_config(
 # Data Source Config
 # ============================================================
 LOCAL_FILE = os.path.join(os.path.dirname(__file__), "2026年海外客户投诉台账.xlsx")
-GITEE_RAW_URL = "https://gitee.com/zzjjyy0612/aftersales-service/raw/master/2026%E5%B9%B4%E6%B5%B7%E5%A4%96%E5%AE%A2%E6%88%B7%E6%8A%95%E8%AF%89%E5%8F%B0%E8%B4%A6%20(1).xlsx"
-GITEE_EDIT_URL = "https://gitee.com/zzjjyy0612/aftersales-service/blob/master/2026%E5%B9%B4%E6%B5%B7%E5%A4%96%E5%AE%A2%E6%88%B7%E6%8A%95%E8%AF%89%E5%8F%B0%E8%B4%A6%20(1).xlsx"
 KDOCS_EDIT_URL = "https://www.kdocs.cn/l/cjP6zkIRj17V"
 CSV_COLS = [
     '编号','分公司','国家或地区','是否大客户','投诉日期','应结案日期','实际完成日期',
@@ -85,7 +83,7 @@ def _process_raw_df(df):
 
 
 def load_data(uploaded_bytes=None):
-    """加载数据: 上传文件 > Gitee实时 > 本地Excel备选"""
+    """加载数据: 上传文件 > 本地Excel"""
     source_label = ""
 
     if uploaded_bytes is not None:
@@ -96,26 +94,12 @@ def load_data(uploaded_bytes=None):
             st.error("❌ 无法读取上传的文件，请确认格式正确")
             st.stop()
     else:
-        # Try Gitee raw URL first (real-time)
         try:
-            import urllib.request as _ur
-            req = _ur.Request(GITEE_RAW_URL, headers={'User-Agent': 'Mozilla/5.0'})
-            with _ur.urlopen(req, timeout=15) as resp:
-                raw_bytes = resp.read()
-            if len(raw_bytes) > 1000:
-                df = pd.read_excel(io.BytesIO(raw_bytes), sheet_name='所有客诉', header=1)
-                source_label = "Gitee (实时)"
+            df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1)
+            source_label = "默认数据"
         except Exception:
-            df = None
-
-        # Fallback: local Excel in repo
-        if df is None:
-            try:
-                df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1)
-                source_label = "本地文件 (备选)"
-            except Exception:
-                st.error("❌ 无法加载数据源，请检查 Gitee 或本地文件")
-                st.stop()
+            st.error("❌ 无法加载数据源，请检查文件")
+            st.stop()
 
     df = _process_raw_df(df)
     df.attrs['source'] = source_label
@@ -1348,20 +1332,7 @@ def main():
 
         # Show data source & freshness
         if uploaded_file is None:
-            st.info("""
-            **💡 实时更新方式：**
-            1. 点击顶部 **「✏️ Gitee 在线编辑」**
-            2. 在 Gitee 编辑 Excel → 提交
-            3. 看板 **30秒内自动刷新**
-
-            **或拖拽上传：**
-            本地编辑后拖Excel到上方框
-            """)
-            try:
-                file_time = datetime.fromtimestamp(os.path.getmtime(LOCAL_FILE))
-                st.caption(f"📂 数据源: Gitee 实时")
-            except Exception:
-                st.caption("📂 数据源: Gitee 实时")
+            st.caption("💡 本地编辑 Excel 后拖拽到此即可更新看板")
 
     # Load data from session state or local file
     upload_bytes = st.session_state.get('uploaded_bytes')
@@ -1428,13 +1399,9 @@ def main():
             <p style="color:#aaa;margin:2px 0 0;font-size:12px;">数据源: {source} · 每30秒自动刷新</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <a href="{GITEE_EDIT_URL}" target="_blank" style="background:#27AE60;color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;border:none;transition:all 0.2s;white-space:nowrap;"
-               onmouseover="this.style.background='#219A52'" onmouseout="this.style.background='#27AE60'">
-               ✏️ Gitee 在线编辑
-            </a>
-            <a href="{KDOCS_EDIT_URL}" target="_blank" style="background:rgba(255,255,255,0.12);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.25);transition:all 0.2s;white-space:nowrap;"
-               onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">
-               📄 金山文档
+            <a href="{KDOCS_EDIT_URL}" target="_blank" style="background:rgba(255,255,255,0.15);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.3);transition:all 0.2s;white-space:nowrap;"
+               onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'">
+               📄 金山在线文档
             </a>
         </div>
     </div>
