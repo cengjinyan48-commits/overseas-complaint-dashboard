@@ -13,6 +13,8 @@ from datetime import datetime
 import os
 import io
 import zipfile
+import hashlib
+import urllib.request
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -548,18 +550,40 @@ def generate_export_zip(df, now):
 # ============================================================
 # PPT Export
 # ============================================================
-# Try to configure Chinese font
+# Chinese font management (runtime download for Streamlit Cloud)
+_CN_FONT_PATH = '/tmp/wqy-microhei.ttc'
+_FONT_URL = 'https://github.com/anthonyfok/fonts-wqy-microhei/raw/master/wqy-microhei.ttc'
+
+def _download_cn_font():
+    """Download Chinese font at runtime if not available"""
+    if os.path.exists(_CN_FONT_PATH):
+        return _CN_FONT_PATH
+    try:
+        urllib.request.urlretrieve(_FONT_URL, _CN_FONT_PATH)
+        if os.path.exists(_CN_FONT_PATH) and os.path.getsize(_CN_FONT_PATH) > 100000:
+            return _CN_FONT_PATH
+    except Exception:
+        pass
+    return None
+
+
 def _setup_cn_font():
     """尝试配置中文字体，返回 FontProperties 对象"""
+    # 1. Try runtime-downloaded font first (most reliable on Streamlit Cloud)
+    downloaded = _download_cn_font()
+    if downloaded:
+        try:
+            return fm.FontProperties(fname=downloaded)
+        except Exception:
+            pass
+
+    # 2. Try installed system font paths
     font_files = [
         '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
         '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
         '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
         '/System/Library/Fonts/PingFang.ttc',
         '/System/Library/Fonts/STHeiti Light.ttc',
-        '/Library/Fonts/Arial Unicode.ttf',
-        'C:\\\\Windows\\\\Fonts\\\\msyh.ttc',
-        'C:\\\\Windows\\\\Fonts\\\\simhei.ttf',
     ]
     for fp in font_files:
         if os.path.exists(fp):
@@ -567,6 +591,8 @@ def _setup_cn_font():
                 return fm.FontProperties(fname=fp)
             except Exception:
                 continue
+
+    # 3. Fallback: search by font name
     candidates = ['WenQuanYi Micro Hei','PingFang SC','Heiti SC','SimHei','Microsoft YaHei','sans-serif']
     try:
         fm._load_fontmanager(try_read_cache=False)
@@ -616,6 +642,18 @@ def _add_slide_title(slide, title_text, prs):
     p.alignment = PP_ALIGN.LEFT
     tf.margin_left = Inches(0.5)
 
+    # Add small logo to title bar (right side) if available
+    if PPT_LOGO_BLOB:
+        try:
+            logo_stream = io.BytesIO(PPT_LOGO_BLOB)
+            logo_w = Inches(1.8)
+            logo_h = Inches(0.45)
+            slide.shapes.add_picture(logo_stream,
+                                     prs.slide_width - logo_w - Inches(0.3),
+                                     Inches(0.12), logo_w, logo_h)
+        except Exception:
+            pass
+
 
 def _set_tf_font(tf, font_name=PPT_FONT):
     """递归设置文本框所有段落的字体"""
@@ -640,7 +678,7 @@ def _add_table(slide, left, top, width, height, headers, rows, col_widths=None):
         cell = tbl.cell(0, i)
         cell.text = str(h)
         cell.fill.solid()
-        cell.fill.fore_color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+        cell.fill.fore_color.rgb = PPT_DARK_BG
         for p in cell.text_frame.paragraphs:
             p.font.size = Pt(9)
             p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
@@ -715,28 +753,32 @@ def extract_template_assets(template_bytes):
         tmpl = Presentation(io.BytesIO(template_bytes))
         assets['has_template'] = True
 
-        # Extract first slide's logo image
+        # Extract the LARGEST image from first slide as logo
         if len(tmpl.slides) > 0:
+            best_img = None
+            best_area = 0
             for shape in tmpl.slides[0].shapes:
                 if shape.shape_type == 13:  # PICTURE
-                    assets['logo_blob'] = shape.image.blob
-                    assets['logo_content_type'] = shape.image.content_type
-                    assets['logo_width'] = shape.width
-                    assets['logo_height'] = shape.height
-                    assets['logo_left'] = shape.left
-                    assets['logo_top'] = shape.top
-                    break  # Take first image only
+                    area = shape.width * shape.height
+                    if area > best_area:
+                        best_area = area
+                        best_img = shape
+            if best_img:
+                assets['logo_blob'] = best_img.image.blob
+                assets['logo_content_type'] = best_img.image.content_type
+                assets['logo_width'] = best_img.width
+                assets['logo_height'] = best_img.height
 
-        # Extract font from first text element
+        # Extract font: search all slides for 'Microsoft YaHei' or '微软雅黑'
         for slide in tmpl.slides:
             for shape in slide.shapes:
                 if shape.has_text_frame:
                     for p in shape.text_frame.paragraphs:
-                        if p.runs and p.runs[0].font.name:
-                            fn = p.runs[0].font.name
-                            if fn and 'yahei' in fn.lower() or '微软' in fn:
-                                assets['title_font'] = fn
-                                assets['body_font'] = fn
+                        for run in p.runs:
+                            fn = (run.font.name or '').lower()
+                            if 'yahei' in fn or '微软雅黑' in fn:
+                                assets['title_font'] = run.font.name
+                                assets['body_font'] = run.font.name
                                 break
                     if assets['title_font'] != 'Microsoft YaHei':
                         break
