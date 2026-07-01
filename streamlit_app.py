@@ -551,14 +551,29 @@ def generate_export_zip(df, now):
 # Try to configure Chinese font
 def _setup_cn_font():
     """尝试配置中文字体，返回可用的字体名"""
-    candidates = ['PingFang SC','Heiti SC','STHeiti','SimHei','Microsoft YaHei','Arial Unicode MS','WenQuanYi Zen Hei','Noto Sans CJK SC','sans-serif']
+    candidates = [
+        'WenQuanYi Micro Hei', 'WenQuanYi Zen Hei',  # Linux (Streamlit Cloud)
+        'PingFang SC', 'Heiti SC', 'STHeiti',          # macOS
+        'SimHei', 'Microsoft YaHei',                    # Windows
+        'Arial Unicode MS', 'Noto Sans CJK SC', 'sans-serif',
+    ]
     available = [f.name for f in fm.fontManager.ttflist]
     for c in candidates:
         if c in available:
             return c
+    # Fallback: rebuild font list and try again
+    try:
+        fm._load_fontmanager(try_read_cache=False)
+        available = [f.name for f in fm.fontManager.ttflist]
+        for c in candidates:
+            if c in available:
+                return c
+    except Exception:
+        pass
     return 'sans-serif'
 
-CN_FONT = None  # Lazy init
+CN_FONT = None  # Lazy init (for matplotlib charts)
+PPT_FONT = 'Microsoft YaHei'  # PPT text font name, widely available on Windows/Mac
 
 
 def _chart_to_img(fig):
@@ -587,8 +602,15 @@ def _add_slide_title(slide, title_text, prs):
     p.font.size = Pt(22)
     p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
     p.font.bold = True
+    p.font.name = PPT_FONT
     p.alignment = PP_ALIGN.LEFT
     tf.margin_left = Inches(0.5)
+
+
+def _set_tf_font(tf, font_name=PPT_FONT):
+    """递归设置文本框所有段落的字体"""
+    for p in tf.paragraphs:
+        p.font.name = font_name
 
 
 def _add_table(slide, left, top, width, height, headers, rows, col_widths=None):
@@ -613,6 +635,7 @@ def _add_table(slide, left, top, width, height, headers, rows, col_widths=None):
             p.font.size = Pt(9)
             p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
             p.font.bold = True
+            p.font.name = PPT_FONT
             p.alignment = PP_ALIGN.CENTER
 
     # Data rows
@@ -629,6 +652,7 @@ def _add_table(slide, left, top, width, height, headers, rows, col_widths=None):
             for p in cell.text_frame.paragraphs:
                 p.font.size = Pt(8)
                 p.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+                p.font.name = PPT_FONT
                 p.alignment = PP_ALIGN.CENTER
 
     return tbl_shape
@@ -702,6 +726,7 @@ def generate_export_ppt(df, now):
     p.font.size = Pt(36)
     p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
     p.font.bold = True
+    p.font.name = PPT_FONT
     p.alignment = PP_ALIGN.CENTER
 
     p2 = tf.add_paragraph()
