@@ -9,8 +9,11 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import os
+
+# Beijing timezone
+BJT = timezone(timedelta(hours=8))
 import io
 import zipfile
 import hashlib
@@ -1302,7 +1305,7 @@ def generate_export_ppt(df, now, template_bytes=None):
 
 
 def main():
-    now = datetime.now()
+    now = datetime.now(BJT)
 
     # ---- Sidebar ----
     with st.sidebar:
@@ -1314,7 +1317,7 @@ def main():
 
         # Data freshness indicator
         if 'data_update_time' not in st.session_state:
-            st.session_state.data_update_time = datetime.now()
+            st.session_state.data_update_time = datetime.now(BJT)
 
         uploaded_file = st.file_uploader(
             "从金山文档导出Excel后拖拽上传",
@@ -1323,7 +1326,7 @@ def main():
             key='excel_uploader',
         )
         if uploaded_file:
-            st.session_state.data_update_time = datetime.now()
+            st.session_state.data_update_time = datetime.now(BJT)
             # Save bytes so we can read multiple times
             st.session_state.uploaded_bytes = uploaded_file.getvalue()
             st.success(f"✅ 数据已同步！刷新中...")
@@ -1582,7 +1585,7 @@ def main():
 
     # ---- Footer ----
     st.divider()
-    st.caption(f"© 2026 海外客户投诉数据看板 · 数据更新: {now.strftime('%Y-%m-%d %H:%M')} · Powered by Streamlit")
+    st.caption(f"© 2026 海外客户投诉数据看板 · 数据更新: {now.strftime('%Y-%m-%d %H:%M')} (北京时间) · Powered by Streamlit")
 
 
 if __name__ == '__main__':
