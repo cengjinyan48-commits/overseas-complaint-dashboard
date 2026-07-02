@@ -689,29 +689,41 @@ def _chart_to_img(fig):
     return buf
 
 
-def _add_template_title(slide, title_text):
-    """添加 TCL 品牌风格标题 — 细红线点缀 + 文字，不遮挡模板背景"""
-    # 细 TCL 红色点缀线
-    line = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
-        Inches(0.5), Inches(0.65),
-        Inches(2.0), Inches(0.04)
-    )
-    line.fill.solid()
-    line.fill.fore_color.rgb = TCL_RED
-    line.line.fill.background()
+def _extract_cover_assets(template_bytes):
+    """从模板封面提取 TCL 品牌元素（logo图片 + 位置）"""
+    tmpl = Presentation(io.BytesIO(template_bytes))
+    slide0 = tmpl.slides[0]
+    assets = {'logo_blob': None, 'logo_left': 0, 'logo_top': 0,
+              'logo_width': 0, 'logo_height': 0}
+    for shape in slide0.shapes:
+        if shape.shape_type == 13:  # PICTURE — TCL组合logo（含奥运五环+奥林匹克全球合作伙伴）
+            assets['logo_blob'] = shape.image.blob
+            assets['logo_left'] = shape.left
+            assets['logo_top'] = shape.top
+            assets['logo_width'] = shape.width
+            assets['logo_height'] = shape.height
+            break
+    return assets
 
-    # 标题文字
-    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.15), Inches(12.0), Inches(0.55))
-    tf = txBox.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
+
+def _add_content_title(slide, title_text, subtitle_text="Data Analysis Report"):
+    """按照模板目录页样式添加标题 — 左上角红色标题 + 灰色英文副标题"""
+    # 红色主标题 — 参照模板目录页 (1.23", 0.21"), 21pt, #FF0000, Microsoft YaHei
+    txBox = slide.shapes.add_textbox(Inches(1.23), Inches(0.21), Inches(10.5), Inches(0.45))
+    p = txBox.text_frame.paragraphs[0]
     p.text = title_text
-    p.font.size = Pt(20)
-    p.font.color.rgb = TCL_RED
+    p.font.size = Pt(21)
+    p.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
     p.font.bold = True
-    p.font.name = PPT_FONT
-    p.alignment = PP_ALIGN.LEFT
+    p.font.name = 'Microsoft YaHei'
+
+    # 灰色英文副标题 — 参照模板目录页 (1.18", 0.65"), 14pt, #898989, Microsoft YaHei Light
+    txBox2 = slide.shapes.add_textbox(Inches(1.18), Inches(0.65), Inches(10.5), Inches(0.35))
+    p2 = txBox2.text_frame.paragraphs[0]
+    p2.text = subtitle_text
+    p2.font.size = Pt(14)
+    p2.font.color.rgb = RGBColor(0x89, 0x89, 0x89)
+    p2.font.name = 'Microsoft YaHei Light'
 
 
 def _set_tf_font(tf, font_name=PPT_FONT):
@@ -803,8 +815,11 @@ def generate_export_ppt(df, now):
 
     # 从缓存加载 TCL 模板，每次导出创建新的 Presentation 对象
     tpl_bytes = _load_template_bytes()
-    prs = Presentation(io.BytesIO(tpl_bytes))
 
+    # 在删除 slides 之前先提取封面品牌元素
+    cover_assets = _extract_cover_assets(tpl_bytes)
+
+    prs = Presentation(io.BytesIO(tpl_bytes))
     PPT_FONT = 'Microsoft YaHei'
 
     # 移除模板原有 slides，保留 layouts / masters / theme
@@ -820,9 +835,6 @@ def generate_export_ppt(df, now):
         sldIdLst.remove(sldIdLst[0])
 
     total = len(df)
-
-    # 所有内容 slides 使用 "空白" layout (index 0) — 自带 TCL 品牌背景图
-    slide_layout = prs.slide_layouts[0]
     done = len(df[df['结案状态'].isin(['结案','关闭'])])
     rate = round(done / total * 100, 1) if total > 0 else 0
     pending = len(df[~df['结案状态'].isin(['结案','关闭'])])
@@ -830,69 +842,67 @@ def generate_export_ppt(df, now):
     overdue_count = len(df[~df['结案状态'].isin(['结案','关闭']) &
                            df['应结案日期'].notna() & (df['应结案日期'] < now)])
 
-    # ================================================================
-    # Slide 1: 封面 — 使用模板背景，TCL 红标题
-    # ================================================================
-    slide = prs.slides.add_slide(slide_layout)  # layout 0 自带 TCL 品牌背景
+    # 封面使用 Layout 0 "空白"（自带全幅背景图 + 右上角logo）
+    cover_layout = prs.slide_layouts[0]
+    # 内容页使用 Layout 2 "标题幻灯片"（自带右上角logo，无全幅背景）
+    content_layout = prs.slide_layouts[2]
 
-    # 半透明卡片保证标题可读性
-    card = slide.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE,
-        Inches(3.0), Inches(1.8),
-        Inches(7.3), Inches(3.5)
-    )
-    card.fill.solid()
-    card.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-    card.line.fill.background()
+    # TCL 红
+    TCL_RED = RGBColor(0xE6, 0x00, 0x12)
 
-    # 标题
-    txBox = slide.shapes.add_textbox(Inches(3.5), Inches(2.2), Inches(6.3), Inches(1.2))
+    # ================================================================
+    # Slide 1: 封面 — 模板第一页样式，TCL组合logo + 标题
+    # ================================================================
+    slide = prs.slides.add_slide(cover_layout)
+
+    # 放置 TCL 组合 logo（含奥运五环、奥林匹克全球合作伙伴）
+    # 位置和大小完全参照模板 Slide 0
+    if cover_assets['logo_blob']:
+        logo_stream = io.BytesIO(cover_assets['logo_blob'])
+        slide.shapes.add_picture(logo_stream,
+            cover_assets['logo_left'], cover_assets['logo_top'],
+            cover_assets['logo_width'], cover_assets['logo_height'])
+
+    # 主标题 — 模板位置 (0.80", 3.79")，30pt Microsoft YaHei
+    txBox = slide.shapes.add_textbox(Inches(0.80), Inches(3.79), Inches(11.0), Inches(0.70))
     tf = txBox.text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]
     p.text = "2026年海外客户投诉数据分析报告"
-    p.font.size = Pt(32)
-    p.font.color.rgb = TCL_RED
+    p.font.size = Pt(30)
+    p.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
     p.font.bold = True
-    p.font.name = PPT_FONT
-    p.alignment = PP_ALIGN.CENTER
+    p.font.name = 'Microsoft YaHei'
 
-    p2 = tf.add_paragraph()
+    # 英文副标题 — 模板位置 (0.80", 4.35")，15pt Microsoft YaHei
+    txBox2 = slide.shapes.add_textbox(Inches(0.80), Inches(4.35), Inches(11.0), Inches(0.40))
+    p2 = txBox2.text_frame.paragraphs[0]
     p2.text = "Overseas Customer Complaint Data Analysis"
-    p2.font.size = Pt(16)
-    p2.font.color.rgb = TCL_DARK
-    p2.alignment = PP_ALIGN.CENTER
+    p2.font.size = Pt(15)
+    p2.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+    p2.font.name = 'Microsoft YaHei'
 
-    # 分隔线
-    div = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
-        Inches(4.5), Inches(3.7),
-        Inches(4.3), Inches(0.03)
-    )
-    div.fill.solid()
-    div.fill.fore_color.rgb = TCL_RED
-    div.line.fill.background()
-
-    # 日期 & 数据信息
-    txBox2 = slide.shapes.add_textbox(Inches(3.5), Inches(4.0), Inches(6.3), Inches(0.8))
-    tf2 = txBox2.text_frame
-    tf2.word_wrap = True
-    p3 = tf2.paragraphs[0]
+    # 数据范围 — 模板位置 (0.80", 5.04")，17pt Microsoft YaHei
+    txBox3 = slide.shapes.add_textbox(Inches(0.80), Inches(5.04), Inches(11.0), Inches(0.40))
+    p3 = txBox3.text_frame.paragraphs[0]
     p3.text = f"数据范围: 2026年1月-6月 | 有效记录: {total} 条"
-    p3.font.size = Pt(11)
-    p3.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-    p3.alignment = PP_ALIGN.CENTER
-    p4 = tf2.add_paragraph()
+    p3.font.size = Pt(17)
+    p3.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+    p3.font.name = 'Microsoft YaHei'
+
+    # 生成时间 — 模板位置 (0.80", 5.38")，12pt Microsoft YaHei
+    txBox4 = slide.shapes.add_textbox(Inches(0.80), Inches(5.38), Inches(11.0), Inches(0.40))
+    p4 = txBox4.text_frame.paragraphs[0]
     p4.text = f"生成时间: {now.strftime('%Y-%m-%d %H:%M')} (北京时间)"
-    p4.font.size = Pt(11)
+    p4.font.size = Pt(12)
     p4.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-    p4.alignment = PP_ALIGN.CENTER
+    p4.font.name = 'Microsoft YaHei'
 
     # ================================================================
     # Slide 2: 执行摘要 - KPI
     # ================================================================
-    slide = prs.slides.add_slide(slide_layout)
-    _add_template_title(slide, "📊 执行摘要 — 关键指标概览")
+    slide = prs.slides.add_slide(content_layout)
+    _add_content_title(slide, "📊 执行摘要 — 关键指标概览")
 
     kpi_data = [
         ('📋 总投诉量', f'{total} 条', '2026年1-6月累计'),
@@ -904,7 +914,7 @@ def generate_export_ppt(df, now):
 
     for i, (label, value, sub) in enumerate(kpi_data):
         left = Inches(0.8 + i * 2.5)
-        top = Inches(1.2)
+        top = Inches(1.3)
         # Card background
         card = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE, left, top, Inches(2.2), Inches(1.5)
@@ -920,15 +930,18 @@ def generate_export_ppt(df, now):
         p.text = label
         p.font.size = Pt(11)
         p.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+        p.font.name = 'Microsoft YaHei'
         p2 = tf.add_paragraph()
         p2.text = value
         p2.font.size = Pt(28)
         p2.font.color.rgb = RGBColor(0xE7, 0x4C, 0x3C) if '🔴' in label else TCL_RED
         p2.font.bold = True
+        p2.font.name = 'Microsoft YaHei'
         p3 = tf.add_paragraph()
         p3.text = sub
         p3.font.size = Pt(9)
         p3.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+        p3.font.name = 'Microsoft YaHei'
 
     # Summary text
     txBox = slide.shapes.add_textbox(Inches(0.8), Inches(3.2), Inches(11.5), Inches(3.5))
@@ -947,14 +960,13 @@ def generate_export_ppt(df, now):
         p.font.size = Pt(13)
         p.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
         p.space_after = Pt(6)
-        for run in p.runs:
-            run.font.name = PPT_FONT
+        p.font.name = 'Microsoft YaHei'
 
     # ================================================================
     # Slide 3: 区域分布 - 分公司 + 国家TOP10
     # ================================================================
-    slide = prs.slides.add_slide(slide_layout)
-    _add_template_title(slide, "🌍 区域分布分析 — 分公司 & 国家/地区")
+    slide = prs.slides.add_slide(content_layout)
+    _add_content_title(slide, "🌍 区域分布分析 — 分公司 & 国家/地区")
 
     # Branch chart
     branch = df['分公司'].value_counts()
@@ -985,8 +997,8 @@ def generate_export_ppt(df, now):
     # ================================================================
     # Slide 4: 时间趋势 + 结案状态
     # ================================================================
-    slide = prs.slides.add_slide(slide_layout)
-    _add_template_title(slide, "📈 时间趋势 & 结案状态分析")
+    slide = prs.slides.add_slide(content_layout)
+    _add_content_title(slide, "📈 时间趋势 & 结案状态分析")
 
     # Monthly trend table
     df['投诉月份'] = df['投诉日期'].dt.to_period('M').astype(str)
@@ -1022,8 +1034,8 @@ def generate_export_ppt(df, now):
     # ================================================================
     # Slide 5: 故障分析 — 帕累托 + 故障×机型交叉
     # ================================================================
-    slide = prs.slides.add_slide(slide_layout)
-    _add_template_title(slide, "🔍 故障分析 — 帕累托 & 故障×机型交叉")
+    slide = prs.slides.add_slide(content_layout)
+    _add_content_title(slide, "🔍 故障分析 — 帕累托 & 故障×机型交叉")
 
     # Fault pareto chart
     fault = df['故障大类'].value_counts()
@@ -1057,8 +1069,8 @@ def generate_export_ppt(df, now):
     # ================================================================
     # Slide 6: 质量管理 — 跟进人 + 8D + 周期
     # ================================================================
-    slide = prs.slides.add_slide(slide_layout)
-    _add_template_title(slide, "👤 质量管理 — 跟进人 & 8D报告 & 处理周期")
+    slide = prs.slides.add_slide(content_layout)
+    _add_content_title(slide, "👤 质量管理 — 跟进人 & 8D报告 & 处理周期")
 
     # Follower chart
     follower = df['跟进人'].value_counts().nlargest(8)
@@ -1114,8 +1126,8 @@ def generate_export_ppt(df, now):
     # ================================================================
     # Slide 7: 超期未结案预警
     # ================================================================
-    slide = prs.slides.add_slide(slide_layout)
-    _add_template_title(slide, "🚨 超期未结案预警 & 分公司×状态交叉表")
+    slide = prs.slides.add_slide(content_layout)
+    _add_content_title(slide, "🚨 超期未结案预警 & 分公司×状态交叉表")
 
     # Overdue warnings
     overdue = df[~df['结案状态'].isin(['结案','关闭']) &
@@ -1152,8 +1164,8 @@ def generate_export_ppt(df, now):
     # ================================================================
     # Slide 8: 建议与总结
     # ================================================================
-    slide = prs.slides.add_slide(slide_layout)
-    _add_template_title(slide, "💡 总结与改进建议")
+    slide = prs.slides.add_slide(content_layout)
+    _add_content_title(slide, "💡 总结与改进建议")
 
     recommendations = [
         ("1. 重点治理装配问题",
