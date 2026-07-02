@@ -667,9 +667,16 @@ def _setup_cn_font():
 
 CN_FONT_PROP = None  # Lazy init
 PPT_FONT = 'Microsoft YaHei'
-PPT_DARK_BG = RGBColor(0x1A, 0x1A, 0x2E)
-PPT_PRIMARY = RGBColor(0x18, 0x90, 0xFF)
-PPT_LOGO_BLOB = None
+TCL_RED = RGBColor(0xE6, 0x00, 0x12)
+TCL_DARK = RGBColor(0x33, 0x33, 0x33)
+TCL_LIGHT_BG = RGBColor(0xF5, 0xF5, 0xF5)
+
+@st.cache_data(show_spinner=False)
+def _load_template_bytes():
+    """加载 TCL PPT 模板字节（缓存，仅首次读取磁盘）"""
+    tpl_path = os.path.join(os.path.dirname(__file__), "assets", "TCL_template.pptx")
+    with open(tpl_path, 'rb') as f:
+        return f.read()
 
 
 def _chart_to_img(fig):
@@ -682,37 +689,29 @@ def _chart_to_img(fig):
     return buf
 
 
-def _add_slide_title(slide, title_text, prs):
-    """添加幻灯片标题栏"""
-    title_box = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE, Inches(0), Inches(0),
-        prs.slide_width, Inches(0.7)
+def _add_template_title(slide, title_text):
+    """添加 TCL 品牌风格标题 — 细红线点缀 + 文字，不遮挡模板背景"""
+    # 细 TCL 红色点缀线
+    line = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(0.5), Inches(0.65),
+        Inches(2.0), Inches(0.04)
     )
-    title_box.fill.solid()
-    title_box.fill.fore_color.rgb = PPT_DARK_BG
-    title_box.line.fill.background()
-    tf = title_box.text_frame
+    line.fill.solid()
+    line.fill.fore_color.rgb = TCL_RED
+    line.line.fill.background()
+
+    # 标题文字
+    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.15), Inches(12.0), Inches(0.55))
+    tf = txBox.text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]
     p.text = title_text
-    p.font.size = Pt(22)
-    p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    p.font.size = Pt(20)
+    p.font.color.rgb = TCL_RED
     p.font.bold = True
     p.font.name = PPT_FONT
     p.alignment = PP_ALIGN.LEFT
-    tf.margin_left = Inches(0.5)
-
-    # Add small logo to title bar (right side) if available
-    if PPT_LOGO_BLOB:
-        try:
-            logo_stream = io.BytesIO(PPT_LOGO_BLOB)
-            logo_w = Inches(1.8)
-            logo_h = Inches(0.45)
-            slide.shapes.add_picture(logo_stream,
-                                     prs.slide_width - logo_w - Inches(0.3),
-                                     Inches(0.12), logo_w, logo_h)
-        except Exception:
-            pass
 
 
 def _set_tf_font(tf, font_name=PPT_FONT):
@@ -738,7 +737,7 @@ def _add_table(slide, left, top, width, height, headers, rows, col_widths=None):
         cell = tbl.cell(0, i)
         cell.text = str(h)
         cell.fill.solid()
-        cell.fill.fore_color.rgb = PPT_DARK_BG
+        cell.fill.fore_color.rgb = TCL_RED
         for p in cell.text_frame.paragraphs:
             p.font.size = Pt(9)
             p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
@@ -797,145 +796,33 @@ def _make_bar_chart(labels, values, title, color='#1890FF', highlight_n=0):
     return fig
 
 
-def extract_template_assets(template_bytes):
-    """从上传的模板 PPT 中提取 Logo、配色、字体信息"""
-    assets = {
-        'logo_blob': None,
-        'logo_content_type': 'image/png',
-        'primary_color': RGBColor(0xE6, 0x00, 0x12),  # TCL red (default)
-        'dark_bg': RGBColor(0x1A, 0x1A, 0x2E),
-        'title_font': 'Microsoft YaHei',
-        'body_font': 'Microsoft YaHei',
-        'accent_gray': RGBColor(0x89, 0x89, 0x89),
-        'has_template': False,
-    }
-    try:
-        tmpl = Presentation(io.BytesIO(template_bytes))
-        assets['has_template'] = True
-
-        # Extract the LARGEST image from first slide as logo
-        if len(tmpl.slides) > 0:
-            best_img = None
-            best_area = 0
-            for shape in tmpl.slides[0].shapes:
-                if shape.shape_type == 13:  # PICTURE
-                    area = shape.width * shape.height
-                    if area > best_area:
-                        best_area = area
-                        best_img = shape
-            if best_img:
-                assets['logo_blob'] = best_img.image.blob
-                assets['logo_content_type'] = best_img.image.content_type
-                assets['logo_width'] = best_img.width
-                assets['logo_height'] = best_img.height
-
-        # Extract font: search all slides for 'Microsoft YaHei' or '微软雅黑'
-        for slide in tmpl.slides:
-            for shape in slide.shapes:
-                if shape.has_text_frame:
-                    for p in shape.text_frame.paragraphs:
-                        for run in p.runs:
-                            fn = (run.font.name or '').lower()
-                            if 'yahei' in fn or '微软雅黑' in fn:
-                                assets['title_font'] = run.font.name
-                                assets['body_font'] = run.font.name
-                                break
-                    if assets['title_font'] != 'Microsoft YaHei':
-                        break
-            if assets['title_font'] != 'Microsoft YaHei':
-                break
-
-    except Exception:
-        pass  # Return defaults if template parsing fails
-
-    return assets
-
-
-def _find_content_layout(prs):
-    """Find the best slide layout for content pages from the template"""
-    # Prefer layouts with '标题' or 'title' in name and placeholders
-    candidates = []
-    for layout in prs.slide_layouts:
-        name = layout.name.lower()
-        score = 0
-        if '标题' in name or 'title' in name:
-            score += 3
-        if len(layout.placeholders) >= 1:
-            score += len(layout.placeholders)
-        if '空白' in name or 'blank' in name:
-            score += 1
-        if score > 0:
-            candidates.append((score, layout))
-    candidates.sort(key=lambda x: -x[0])
-    if candidates:
-        return candidates[0][1]
-    # Fallback: first layout with at least 1 placeholder
-    for layout in prs.slide_layouts:
-        if len(layout.placeholders) >= 1:
-            return layout
-    return prs.slide_layouts[0]
-
-
-def generate_export_ppt(df, now, template_bytes=None):
-    """生成 PPT 数据分析报告
-    - If template_bytes provided: use template as base, preserve all design
-    - Otherwise: generate from scratch with default style
-    """
-    global CN_FONT_PROP, PPT_FONT, PPT_DARK_BG, PPT_PRIMARY, PPT_LOGO_BLOB
+def generate_export_ppt(df, now):
+    """生成 PPT 数据分析报告 — 始终使用内置 TCL 品牌模板"""
+    global CN_FONT_PROP, PPT_FONT
     CN_FONT_PROP = _setup_cn_font()
 
-    USING_TEMPLATE = template_bytes is not None
+    # 从缓存加载 TCL 模板，每次导出创建新的 Presentation 对象
+    tpl_bytes = _load_template_bytes()
+    prs = Presentation(io.BytesIO(tpl_bytes))
 
-    if USING_TEMPLATE:
-        # ---- Template-based mode: use uploaded .pptx as base ----
-        prs = Presentation(io.BytesIO(template_bytes))
-        content_layout = _find_content_layout(prs)
+    PPT_FONT = 'Microsoft YaHei'
 
-        # Extract fonts BEFORE removing slides
-        PPT_FONT = 'Microsoft YaHei'
-        try:
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if shape.has_text_frame:
-                        for p in shape.text_frame.paragraphs:
-                            for run in p.runs:
-                                if run.font.name:
-                                    PPT_FONT = run.font.name
-                                    break
-        except Exception:
-            pass
-        PPT_DARK_BG = RGBColor(0x1A, 0x1A, 0x2E)
-        PPT_PRIMARY = RGBColor(0xE6, 0x00, 0x12)
-        PPT_LOGO_BLOB = None
-
-        # Remove all existing slides (keep layouts, masters, theme)
-        sldIdLst = prs.slides._sldIdLst
-        ns = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
-        while len(sldIdLst) > 0:
-            rId = sldIdLst[0].get(ns + 'id')
-            if rId:
-                try:
-                    prs.part.drop_rel(rId)
-                except Exception:
-                    pass
-            sldIdLst.remove(sldIdLst[0])
-
-    else:
-        # ---- From-scratch mode ----
-        PPT_FONT = 'Microsoft YaHei'
-        PPT_PRIMARY = RGBColor(0x18, 0x90, 0xFF)
-        PPT_DARK_BG = RGBColor(0x1A, 0x1A, 0x2E)
-        PPT_LOGO_BLOB = None
-
-        prs = Presentation()
-        prs.slide_width = Inches(13.333)
-        prs.slide_height = Inches(7.5)
-        content_layout = None  # Use blank slide layout
+    # 移除模板原有 slides，保留 layouts / masters / theme
+    sldIdLst = prs.slides._sldIdLst
+    ns = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+    while len(sldIdLst) > 0:
+        rId = sldIdLst[0].get(ns + 'id')
+        if rId:
+            try:
+                prs.part.drop_rel(rId)
+            except Exception:
+                pass
+        sldIdLst.remove(sldIdLst[0])
 
     total = len(df)
 
-    # Layout to use for content slides
-    slide_layout = content_layout if content_layout else prs.slide_layouts[6]
+    # 所有内容 slides 使用 "空白" layout (index 0) — 自带 TCL 品牌背景图
+    slide_layout = prs.slide_layouts[0]
     done = len(df[df['结案状态'].isin(['结案','关闭'])])
     rate = round(done / total * 100, 1) if total > 0 else 0
     pending = len(df[~df['结案状态'].isin(['结案','关闭'])])
@@ -944,56 +831,68 @@ def generate_export_ppt(df, now, template_bytes=None):
                            df['应结案日期'].notna() & (df['应结案日期'] < now)])
 
     # ================================================================
-    # Slide 1: 封面
+    # Slide 1: 封面 — 使用模板背景，TCL 红标题
     # ================================================================
-    slide = prs.slides.add_slide(slide_layout)  # blank
-    bg = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE, Inches(0), Inches(0),
-        prs.slide_width, prs.slide_height
+    slide = prs.slides.add_slide(slide_layout)  # layout 0 自带 TCL 品牌背景
+
+    # 半透明卡片保证标题可读性
+    card = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(3.0), Inches(1.8),
+        Inches(7.3), Inches(3.5)
     )
-    bg.fill.solid()
-    bg.fill.fore_color.rgb = PPT_DARK_BG
-    bg.line.fill.background()
+    card.fill.solid()
+    card.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    card.line.fill.background()
 
-    # Logo (if from template)
-    if PPT_LOGO_BLOB:
-        try:
-            logo_stream = io.BytesIO(PPT_LOGO_BLOB)
-            slide.shapes.add_picture(logo_stream, Inches(0.5), Inches(0.5), Inches(3.5), Inches(1.2))
-        except Exception:
-            pass
-
-    # Title
-    txBox = slide.shapes.add_textbox(Inches(1.5), Inches(2.0), Inches(10), Inches(1.5))
+    # 标题
+    txBox = slide.shapes.add_textbox(Inches(3.5), Inches(2.2), Inches(6.3), Inches(1.2))
     tf = txBox.text_frame
+    tf.word_wrap = True
     p = tf.paragraphs[0]
     p.text = "2026年海外客户投诉数据分析报告"
-    p.font.size = Pt(36)
-    p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    p.font.size = Pt(32)
+    p.font.color.rgb = TCL_RED
     p.font.bold = True
     p.font.name = PPT_FONT
     p.alignment = PP_ALIGN.CENTER
 
     p2 = tf.add_paragraph()
     p2.text = "Overseas Customer Complaint Data Analysis"
-    p2.font.size = Pt(18)
-    p2.font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
+    p2.font.size = Pt(16)
+    p2.font.color.rgb = TCL_DARK
     p2.alignment = PP_ALIGN.CENTER
 
-    # Date & info
-    txBox2 = slide.shapes.add_textbox(Inches(1.5), Inches(5.0), Inches(10), Inches(1))
+    # 分隔线
+    div = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(4.5), Inches(3.7),
+        Inches(4.3), Inches(0.03)
+    )
+    div.fill.solid()
+    div.fill.fore_color.rgb = TCL_RED
+    div.line.fill.background()
+
+    # 日期 & 数据信息
+    txBox2 = slide.shapes.add_textbox(Inches(3.5), Inches(4.0), Inches(6.3), Inches(0.8))
     tf2 = txBox2.text_frame
+    tf2.word_wrap = True
     p3 = tf2.paragraphs[0]
-    p3.text = f"数据范围: 2026年1月-6月 | 有效记录: {total} 条 | 生成时间: {now.strftime('%Y-%m-%d %H:%M')}"
-    p3.font.size = Pt(12)
-    p3.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    p3.text = f"数据范围: 2026年1月-6月 | 有效记录: {total} 条"
+    p3.font.size = Pt(11)
+    p3.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
     p3.alignment = PP_ALIGN.CENTER
+    p4 = tf2.add_paragraph()
+    p4.text = f"生成时间: {now.strftime('%Y-%m-%d %H:%M')} (北京时间)"
+    p4.font.size = Pt(11)
+    p4.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+    p4.alignment = PP_ALIGN.CENTER
 
     # ================================================================
     # Slide 2: 执行摘要 - KPI
     # ================================================================
     slide = prs.slides.add_slide(slide_layout)
-    _add_slide_title(slide, "📊 执行摘要 — 关键指标概览", prs)
+    _add_template_title(slide, "📊 执行摘要 — 关键指标概览")
 
     kpi_data = [
         ('📋 总投诉量', f'{total} 条', '2026年1-6月累计'),
@@ -1024,7 +923,7 @@ def generate_export_ppt(df, now, template_bytes=None):
         p2 = tf.add_paragraph()
         p2.text = value
         p2.font.size = Pt(28)
-        p2.font.color.rgb = RGBColor(0xE7, 0x4C, 0x3C) if '🔴' in label else PPT_PRIMARY
+        p2.font.color.rgb = RGBColor(0xE7, 0x4C, 0x3C) if '🔴' in label else TCL_RED
         p2.font.bold = True
         p3 = tf.add_paragraph()
         p3.text = sub
@@ -1055,7 +954,7 @@ def generate_export_ppt(df, now, template_bytes=None):
     # Slide 3: 区域分布 - 分公司 + 国家TOP10
     # ================================================================
     slide = prs.slides.add_slide(slide_layout)
-    _add_slide_title(slide, "🌍 区域分布分析 — 分公司 & 国家/地区", prs)
+    _add_template_title(slide, "🌍 区域分布分析 — 分公司 & 国家/地区")
 
     # Branch chart
     branch = df['分公司'].value_counts()
@@ -1087,7 +986,7 @@ def generate_export_ppt(df, now, template_bytes=None):
     # Slide 4: 时间趋势 + 结案状态
     # ================================================================
     slide = prs.slides.add_slide(slide_layout)
-    _add_slide_title(slide, "📈 时间趋势 & 结案状态分析", prs)
+    _add_template_title(slide, "📈 时间趋势 & 结案状态分析")
 
     # Monthly trend table
     df['投诉月份'] = df['投诉日期'].dt.to_period('M').astype(str)
@@ -1124,7 +1023,7 @@ def generate_export_ppt(df, now, template_bytes=None):
     # Slide 5: 故障分析 — 帕累托 + 故障×机型交叉
     # ================================================================
     slide = prs.slides.add_slide(slide_layout)
-    _add_slide_title(slide, "🔍 故障分析 — 帕累托 & 故障×机型交叉", prs)
+    _add_template_title(slide, "🔍 故障分析 — 帕累托 & 故障×机型交叉")
 
     # Fault pareto chart
     fault = df['故障大类'].value_counts()
@@ -1159,7 +1058,7 @@ def generate_export_ppt(df, now, template_bytes=None):
     # Slide 6: 质量管理 — 跟进人 + 8D + 周期
     # ================================================================
     slide = prs.slides.add_slide(slide_layout)
-    _add_slide_title(slide, "👤 质量管理 — 跟进人 & 8D报告 & 处理周期", prs)
+    _add_template_title(slide, "👤 质量管理 — 跟进人 & 8D报告 & 处理周期")
 
     # Follower chart
     follower = df['跟进人'].value_counts().nlargest(8)
@@ -1216,7 +1115,7 @@ def generate_export_ppt(df, now, template_bytes=None):
     # Slide 7: 超期未结案预警
     # ================================================================
     slide = prs.slides.add_slide(slide_layout)
-    _add_slide_title(slide, "🚨 超期未结案预警 & 分公司×状态交叉表", prs)
+    _add_template_title(slide, "🚨 超期未结案预警 & 分公司×状态交叉表")
 
     # Overdue warnings
     overdue = df[~df['结案状态'].isin(['结案','关闭']) &
@@ -1254,7 +1153,7 @@ def generate_export_ppt(df, now, template_bytes=None):
     # Slide 8: 建议与总结
     # ================================================================
     slide = prs.slides.add_slide(slide_layout)
-    _add_slide_title(slide, "💡 总结与改进建议", prs)
+    _add_template_title(slide, "💡 总结与改进建议")
 
     recommendations = [
         ("1. 重点治理装配问题",
@@ -1281,7 +1180,7 @@ def generate_export_ppt(df, now, template_bytes=None):
         p.text = title
         p.font.size = Pt(13)
         p.font.bold = True
-        p.font.color.rgb = PPT_PRIMARY
+        p.font.color.rgb = TCL_RED
         p2 = tf.add_paragraph()
         p2.text = detail
         p2.font.size = Pt(10)
@@ -1366,24 +1265,10 @@ def main():
         st.caption("14个CSV：明细数据 + 各维度统计 + 交叉表 + 超期预警")
 
         st.divider()
-        st.markdown("### 🎨 PPT模板（可选）")
-        uploaded_template = st.file_uploader(
-            "上传 .pptx 模板以套用品牌风格",
-            type=['pptx'],
-            help="上传公司PPT模板，导出报告将自动提取Logo、配色、字体并应用",
-        )
-        if uploaded_template:
-            tpl_bytes = uploaded_template.read()
-            template_assets = extract_template_assets(tpl_bytes)
-            if template_assets['has_template']:
-                st.success(f"✅ 模板已识别 | Logo: {'有' if template_assets['logo_blob'] else '无'} | 字体: {template_assets['title_font']} | 将作为底板使用")
-            else:
-                st.warning("未能识别模板，将使用默认风格")
-                tpl_bytes = None
-        else:
-            tpl_bytes = None
+        st.markdown("### 📊 导出PPT报告")
+        st.caption("使用内置 TCL 品牌模板，无需上传")
 
-        export_ppt = generate_export_ppt(filtered, now, tpl_bytes)
+        export_ppt = generate_export_ppt(filtered, now)
         st.download_button(
             label="📊 导出数据分析报告 (PPT)",
             data=export_ppt,
