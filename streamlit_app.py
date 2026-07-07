@@ -511,7 +511,7 @@ def send_warning_emails(df, now) -> dict:
             due_date = r['应结案日期'].strftime('%Y-%m-%d') if pd.notna(r['应结案日期']) else '-'
             desc = str(r['问题描述'])[:100] if pd.notna(r['问题描述']) else ''
             rows_html += f"""<tr>
-                <td style="padding:6px 8px;border-bottom:1px solid #eee;">{int(r['_num'])}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eee;">{int(r['编号_int'])}</td>
                 <td style="padding:6px 8px;border-bottom:1px solid #eee;">{r['国家或地区']}</td>
                 <td style="padding:6px 8px;border-bottom:1px solid #eee;">{due_date}</td>
                 <td style="padding:6px 8px;border-bottom:1px solid #eee;color:#e60012;font-weight:bold;">{warn_date}</td>
@@ -1409,7 +1409,7 @@ def main():
             overdue_warnings_sorted = overdue_warnings.sort_values('超期天数', ascending=False)
             # 按跟进人汇总
             follower_summary = overdue_warnings_sorted.groupby('跟进人').agg(
-                预警数=('_num', 'count'), 最长达=('超期天数', 'max')
+                预警数=('编号_int', 'count'), 最长达=('超期天数', 'max')
             ).sort_values('预警数', ascending=False)
             for follower, row in follower_summary.iterrows():
                 email = FOLLOWER_EMAILS.get(follower, '无邮箱')
