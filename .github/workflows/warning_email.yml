@@ -1,0 +1,33 @@
+name: 结案预警邮件通知
+
+on:
+  schedule:
+    # 每天北京时间 9:00 (UTC+8) = UTC 1:00
+    # GitHub Actions 定时任务可能有 10-30 分钟延迟
+    - cron: "0 1 * * *"
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  send-warnings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: pip install pandas openpyxl
+
+      - name: 发送预警邮件
+        env:
+          SMTP_SERVER:   ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT:     ${{ secrets.SMTP_PORT }}
+          SMTP_USER:     ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: python send_warning_emails.py
