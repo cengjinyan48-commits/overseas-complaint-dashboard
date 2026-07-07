@@ -15,6 +15,24 @@ import os
 # Beijing timezone
 BJT = timezone(timedelta(hours=8))
 import io
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+# ============================================================
+# 结案预警邮件配置
+# ============================================================
+FOLLOWER_EMAILS = {
+    "郑小平": "payne.zheng@tcl.com",
+    "陈耀球": "kt_yorkchen@tcl.com",
+    "曾靖衍": "jingyan.zeng@tcl.com",
+    "黄忠成": "zhongcheng.huang@tcl.com",
+    "方益勋": "kt_fangyx@tcl.com",
+}
+SMTP_SERVER   = os.getenv("SMTP_SERVER", "mail.tcl.com")
+SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER     = os.getenv("SMTP_USER", "pub_kehufuwubu@tcl.com")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "svc@2027")
 import zipfile
 import hashlib
 import urllib.request
@@ -459,6 +477,88 @@ def make_cycle_chart(df):
         margin=dict(l=10, r=10, t=40, b=10),
     )
     return fig
+
+
+def send_warning_emails(df, now) -> dict:
+    """发送结案预警邮件，返回发送结果"""
+    # 筛选超期未结案
+    mask = (
+        (df['结案状态'] == '未结案') &
+        df['结案预警'].notna() &
+        (df['结案预警'] <= now)
+    )
+    overdue = df[mask].copy()
+    if len(overdue) == 0:
+        return {"success": 0, "fail": 0, "skipped": 0, "details": [], "total_overdue": 0}
+
+    overdue['超期天数'] = (now - overdue['结案预警']).dt.days
+    total_unclosed = int((df['结案状态'] == '未结案').sum())
+
+    results = []
+    success = fail = skipped = 0
+
+    for follower, group in overdue.groupby('跟进人'):
+        email = FOLLOWER_EMAILS.get(follower)
+        if not email:
+            skipped += 1
+            results.append({"follower": follower, "email": "", "count": len(group), "status": "skipped"})
+            continue
+
+        # 构造 HTML 邮件
+        rows_html = ""
+        for _, r in group.iterrows():
+            warn_date = r['结案预警'].strftime('%Y-%m-%d') if pd.notna(r['结案预警']) else '-'
+            due_date = r['应结案日期'].strftime('%Y-%m-%d') if pd.notna(r['应结案日期']) else '-'
+            desc = str(r['问题描述'])[:100] if pd.notna(r['问题描述']) else ''
+            rows_html += f"""<tr>
+                <td style="padding:6px 8px;border-bottom:1px solid #eee;">{int(r['_num'])}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eee;">{r['国家或地区']}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eee;">{due_date}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eee;color:#e60012;font-weight:bold;">{warn_date}</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eee;color:#e60012;font-weight:bold;">{int(r['超期天数'])}天</td>
+                <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:11px;color:#666;">{desc}</td>
+            </tr>"""
+
+        today_str = now.strftime('%Y-%m-%d')
+        html = f"""<div style="max-width:750px;font-family:'Microsoft YaHei',Arial,sans-serif;">
+            <div style="background:#e60012;padding:16px 20px;border-radius:6px 6px 0 0;">
+                <h2 style="color:#fff;margin:0;font-size:16px;">2026年海外客户投诉 — 结案预警提醒</h2></div>
+            <div style="background:#fff;padding:16px 20px;border:1px solid #e0e0e0;border-top:none;">
+                <p style="font-size:14px;"><b>{follower}</b>，您好：</p>
+                <p style="font-size:14px;">截至 <b>{today_str}</b>，您有 <span style="color:#e60012;font-weight:bold;font-size:18px;">{len(group)}条</span> 客诉已超过结案预警日期，请尽快处理。</p>
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead><tr style="background:#e60012;color:#fff;">
+                        <th style="padding:8px;text-align:left;">编号</th><th style="padding:8px;text-align:left;">国家</th>
+                        <th style="padding:8px;text-align:left;">应结案</th><th style="padding:8px;text-align:left;">预警</th>
+                        <th style="padding:8px;text-align:left;">超期</th><th style="padding:8px;text-align:left;">问题描述</th>
+                    </tr></thead><tbody>{rows_html}</tbody></table>
+                <p style="margin-top:16px;font-size:11px;color:#999;">※ 此邮件由海外客诉看板自动发送 · 全量未结案 <b>{total_unclosed}</b> 条</p></div></div>"""
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"【客诉预警】{follower}，您有 {len(group)} 条客诉超期未结案 - {today_str}"
+        msg["From"] = f"海外客户服务部 <{SMTP_USER}>"
+        msg["To"] = f"{follower} <{email}>"
+        msg.attach(MIMEText(html, "html", "utf-8"))
+
+        try:
+            if SMTP_PORT == 465:
+                server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=15)
+            else:
+                server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=15)
+                server.ehlo()
+                if server.has_extn("STARTTLS"):
+                    server.starttls()
+                    server.ehlo()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, email, msg.as_string())
+            server.quit()
+            success += 1
+            results.append({"follower": follower, "email": email, "count": len(group), "status": "sent"})
+        except Exception as e:
+            fail += 1
+            results.append({"follower": follower, "email": email, "count": len(group), "status": f"failed: {e}"})
+
+    return {"success": success, "fail": fail, "skipped": skipped, "details": results, "total_overdue": len(overdue)}
 
 
 # ============================================================
@@ -1289,6 +1389,50 @@ def main():
             use_container_width=True,
         )
         st.caption("8页PPT：封面 + KPI摘要 + 区域/趋势/故障/质量分析 + 改进建议")
+
+        # ---- 结案预警 ----
+        st.divider()
+        st.markdown("### 🚨 结案预警通知")
+
+        # 统计超期未结案
+        warn_mask = (
+            (filtered['结案状态'] == '未结案') &
+            filtered['结案预警'].notna() &
+            (filtered['结案预警'] <= now)
+        )
+        overdue_warnings = filtered[warn_mask]
+        overdue_count = len(overdue_warnings)
+
+        if overdue_count > 0:
+            st.warning(f"⚠️ **{overdue_count}** 条超期未结案预警")
+            overdue_warnings['超期天数'] = (now - overdue_warnings['结案预警']).dt.days
+            overdue_warnings_sorted = overdue_warnings.sort_values('超期天数', ascending=False)
+            # 按跟进人汇总
+            follower_summary = overdue_warnings_sorted.groupby('跟进人').agg(
+                预警数=('_num', 'count'), 最长达=('超期天数', 'max')
+            ).sort_values('预警数', ascending=False)
+            for follower, row in follower_summary.iterrows():
+                email = FOLLOWER_EMAILS.get(follower, '无邮箱')
+                st.caption(f"  {follower}: {int(row['预警数'])}条预警 (最长{int(row['最长达'])}天)")
+
+            # 一键发送按钮
+            if st.button("📧 一键发送结案预警邮件", type="primary", use_container_width=True):
+                with st.spinner("正在发送预警邮件..."):
+                    result = send_warning_emails(filtered, now)
+                if result['success'] > 0:
+                    st.success(f"✅ 已发送 {result['success']} 封邮件")
+                    for d in result['details']:
+                        if d['status'] == 'sent':
+                            st.caption(f"  ✓ {d['follower']} ({d['count']}条)")
+                if result['fail'] > 0:
+                    st.error(f"❌ {result['fail']} 封发送失败")
+                    for d in result['details']:
+                        if d['status'] != 'sent' and d['status'] != 'skipped':
+                            st.caption(f"  ✗ {d['follower']}: {d['status']}")
+                if result['skipped'] > 0:
+                    st.warning(f"⚠️ {result['skipped']} 人无邮箱，已跳过")
+        else:
+            st.success("✅ 当前无超期未结案预警")
 
     # ---- Main Area ----
     # Header with source file link
