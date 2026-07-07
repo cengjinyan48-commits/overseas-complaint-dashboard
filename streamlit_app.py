@@ -1566,20 +1566,31 @@ def main():
 
     # ============ TAB 4: 数据明细 ============
     with tab4:
+        # 预计算选项（确保是纯 Python 字符串列表，避免 pandas/numpy 类型问题）
+        fault_options = ['全部'] + sorted([str(x) for x in filtered['故障大类'].dropna().unique()])
+        status_options = ['全部'] + sorted([str(x) for x in filtered['结案状态'].dropna().unique()])
+
         # Search & filter row
         search_col1, search_col2, search_col3 = st.columns([3, 1, 1])
         with search_col1:
-            search = st.text_input("🔍 全局搜索", placeholder="输入编号/国家/故障/跟进人...")
+            search = st.text_input("🔍 全局搜索", placeholder="输入编号/国家/故障/跟进人...", key="tab4_search")
         with search_col2:
-            fault_filter = st.selectbox("故障大类筛选", options=['全部'] + sorted(filtered['故障大类'].dropna().unique().tolist()))
+            # 安全默认值：若 session_state 中的值不在新 options 中则回退到 '全部'
+            fault_default = st.session_state.get("tab4_fault", "全部")
+            if fault_default not in fault_options:
+                fault_default = "全部"
+            fault_filter = st.selectbox("故障大类筛选", options=fault_options, key="tab4_fault")
         with search_col3:
-            status_filter = st.selectbox("结案状态筛选", options=['全部'] + sorted(filtered['结案状态'].dropna().unique().tolist()))
+            status_default = st.session_state.get("tab4_status", "全部")
+            if status_default not in status_options:
+                status_default = "全部"
+            status_filter = st.selectbox("结案状态筛选", options=status_options, key="tab4_status")
 
         # Apply filters
         display = filtered.copy()
         if search:
             mask = (
-                display['编号_int'].astype(str).str.contains(search, case=False) |
+                display['编号_int'].astype(str).str.contains(search, case=False, na=False) |
                 display['国家或地区'].str.contains(search, case=False, na=False) |
                 display['故障大类'].str.contains(search, case=False, na=False) |
                 display['跟进人'].str.contains(search, case=False, na=False) |
@@ -1588,9 +1599,9 @@ def main():
             )
             display = display[mask]
         if fault_filter != '全部':
-            display = display[display['故障大类'] == fault_filter]
+            display = display[display['故障大类'].astype(str) == fault_filter]
         if status_filter != '全部':
-            display = display[display['结案状态'] == status_filter]
+            display = display[display['结案状态'].astype(str) == status_filter]
 
         st.caption(f"显示 {len(display)} / {len(filtered)} 条记录")
 
