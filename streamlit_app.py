@@ -313,6 +313,8 @@ def make_fault_pareto(df):
     counts = df['故障大类'].value_counts().reset_index()
     counts.columns = ['故障大类','数量']
     total = counts['数量'].sum()
+    if total == 0:
+        total = 1  # 防止除以零
     counts = counts.sort_values('数量', ascending=False)
     counts['累计占比'] = counts['数量'].cumsum() / total * 100
 
@@ -463,6 +465,8 @@ def make_cycle_chart(df):
         int(((cycle > 6) & (cycle <= 9)).sum()),
         int((cycle > 9).sum()),
     ]
+    avg_str = f'{cycle.mean():.1f}' if len(cycle) > 0 else '-'
+    med_str = f'{cycle.median():.0f}' if len(cycle) > 0 else '-'
 
     fig = go.Figure(go.Bar(
         x=labels, y=values,
@@ -470,7 +474,7 @@ def make_cycle_chart(df):
         text=values, textposition='outside',
     ))
     fig.update_layout(
-        title=f'完成周期分布（平均 {cycle.mean():.1f} 天，中位数 {cycle.median():.0f} 天）',
+        title=f'完成周期分布（平均 {avg_str} 天，中位数 {med_str} 天）',
         xaxis_title='周期',
         yaxis_title='条数',
         height=300,
@@ -568,6 +572,11 @@ def generate_export_zip(df, now):
     """生成包含全部分析维度 + 明细数据的 ZIP 文件"""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        n = len(df)
+        if n == 0:
+            zf.writestr('提示.txt', '当前筛选条件下无数据，请调整筛选器后重试。'.encode('utf-8'))
+            buf.seek(0)
+            return buf
 
         # --- 01 客诉明细数据 ---
         detail_cols = {
@@ -670,17 +679,20 @@ def generate_export_zip(df, now):
 
         # --- 14 完成周期统计 ---
         cycle = df['完成周期（天）'].dropna()
-        cycle_stats = pd.DataFrame({
-            '指标': ['记录数','平均值','中位数','最小值','最大值','标准差'],
-            '数值': [
-                len(cycle),
-                round(cycle.mean(), 1),
-                round(cycle.median(), 1),
-                int(cycle.min()),
-                int(cycle.max()),
-                round(cycle.std(), 1),
-            ]
-        })
+        if len(cycle) > 0:
+            cycle_stats = pd.DataFrame({
+                '指标': ['记录数','平均值','中位数','最小值','最大值','标准差'],
+                '数值': [
+                    len(cycle),
+                    round(cycle.mean(), 1),
+                    round(cycle.median(), 1),
+                    int(cycle.min()),
+                    int(cycle.max()),
+                    round(cycle.std(), 1) if len(cycle) > 1 else 0,
+                ]
+            })
+        else:
+            cycle_stats = pd.DataFrame({'指标': ['记录数'], '数值': [0]})
         zf.writestr('14_完成周期统计.csv', cycle_stats.to_csv(index=False, encoding='utf-8-sig'))
 
     buf.seek(0)
@@ -938,7 +950,8 @@ def generate_export_ppt(df, now):
     done = len(df[df['结案状态'].isin(['结案','关闭'])])
     rate = round(done / total * 100, 1) if total > 0 else 0
     pending = len(df[~df['结案状态'].isin(['结案','关闭'])])
-    cycle_avg = round(df['完成周期（天）'].dropna().mean(), 1)
+    cycle_avg_raw = df['完成周期（天）'].dropna().mean()
+    cycle_avg = round(cycle_avg_raw, 1) if pd.notna(cycle_avg_raw) else '-'
     overdue_count = len(df[~df['结案状态'].isin(['结案','关闭']) &
                            df['应结案日期'].notna() & (df['应结案日期'] < now)])
 
@@ -1049,10 +1062,10 @@ def generate_export_ppt(df, now):
     tf.word_wrap = True
     summary_items = [
         f"● 2026年上半年累计受理海外客户投诉 {total} 条，整体结案率 {rate}%，尚有 {pending} 条未完结。",
-        f"● 投诉高峰集中在3-5月（共40条），6月回落至7条。",
-        f"● 装配问题是头号故障类型（{len(df[df['故障大类']=='装配问题'])}条，占{round(len(df[df['故障大类']=='装配问题'])/total*100,1)}%），需重点关注生产装配环节。",
-        f"● 变频机型投诉占比超50%，美国和中国台湾是投诉最多的市场。",
-        f"● {overdue_count} 条超期未结案需紧急处理，其中编号1（澳大利亚）已超期160+天。",
+        f"● 投诉高峰集中在3-5月，6月起逐步回落。",
+        f"● 当前已识别超期未结案 {overdue_count} 条，需紧急处理。",
+        f"● 变频机型投诉占比较高，美国和欧洲是投诉最多的市场。",
+        f"● {overdue_count} 条超期未结案需紧急处理，请逐条制定结案计划。",
     ]
     for item in summary_items:
         p = tf.add_paragraph()
@@ -1215,11 +1228,14 @@ def generate_export_ppt(df, now):
 
     # Cycle stats
     cycle = df['完成周期（天）'].dropna()
-    cycle_rows = [
-        ('记录数', len(cycle)), ('平均值', f'{cycle.mean():.1f} 天'),
-        ('中位数', f'{cycle.median():.0f} 天'), ('最小值', f'{cycle.min():.0f} 天'),
-        ('最大值', f'{cycle.max():.0f} 天'), ('标准差', f'{cycle.std():.1f} 天'),
-    ]
+    if len(cycle) > 0:
+        cycle_rows = [
+            ('记录数', len(cycle)), ('平均值', f'{cycle.mean():.1f} 天'),
+            ('中位数', f'{cycle.median():.0f} 天'), ('最小值', f'{cycle.min():.0f} 天'),
+            ('最大值', f'{cycle.max():.0f} 天'), ('标准差', f'{cycle.std():.1f} 天' if len(cycle) > 1 else '0.0 天'),
+        ]
+    else:
+        cycle_rows = [('记录数', 0)]
     _add_table(slide, Inches(9.2), Inches(1.0), Inches(3.8), Inches(2.0),
                ['完成周期指标','数值'], cycle_rows)
 
@@ -1269,7 +1285,7 @@ def generate_export_ppt(df, now):
 
     recommendations = [
         ("1. 重点治理装配问题",
-         f"装配问题占总投诉的{round(len(df[df['故障大类']=='装配问题'])/total*100,1)}%，建议对中山一厂、广州工厂、印尼工厂开展装配工序专项审查，"
+         f"装配问题为投诉中占比较高的故障类型，建议对中山一厂、广州工厂、印尼工厂开展装配工序专项审查，"
          "加强首检和巡检力度，对频繁出现装配问题的产线进行停线整顿。"),
         ("2. 变频产品专项质量提升",
          f"变频整机+散件投诉占总量的71.1%，建议成立变频产品专项质量小组，重点关注裂管/漏氟、电控、外观不良等高频故障。"),
@@ -1458,7 +1474,8 @@ def main():
     done = len(filtered[filtered['结案状态'].isin(['结案','关闭'])])
     rate = round(done / total * 100, 1) if total > 0 else 0
     pending = len(filtered[~filtered['结案状态'].isin(['结案','关闭'])])
-    cycle_avg = round(filtered['完成周期（天）'].dropna().mean(), 1)
+    cycle_avg = filtered['完成周期（天）'].dropna().mean()
+    cycle_avg = round(cycle_avg, 1) if pd.notna(cycle_avg) else '-'
     overdue = len(filtered[~filtered['结案状态'].isin(['结案','关闭']) &
                            filtered['应结案日期'].notna() &
                            (filtered['应结案日期'] < now)])
