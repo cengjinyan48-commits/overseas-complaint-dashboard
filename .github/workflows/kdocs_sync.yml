@@ -34,11 +34,15 @@ jobs:
         env:
           KDOCS_AUTH: ${{ secrets.KDOCS_AUTH }}
         run: python sync_from_kdocs.py
+        continue-on-error: true
 
       - name: 提交更新
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://${GH_PAT}@github.com/${{ github.repository }}.git"
           git add "2026年海外客户投诉台账.xlsx"
           if git diff --staged --quiet; then
             echo "数据无变化，跳过提交"
