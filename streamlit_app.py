@@ -15,6 +15,7 @@ import os
 # Beijing timezone
 BJT = timezone(timedelta(hours=8))
 import io
+import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -1449,6 +1450,39 @@ def main():
                     st.warning(f"⚠️ {result['skipped']} 人无邮箱，已跳过")
         else:
             st.success("✅ 当前无超期未结案预警")
+
+        # ---- 数据同步 ----
+        st.divider()
+        st.markdown("### 🔄 数据同步")
+        st.caption(f"金山在线文档 → 看板数据自动同步")
+
+        col_sync1, col_sync2 = st.columns([2, 1])
+        with col_sync1:
+            st.markdown(
+                f'<a href="{KDOCS_EDIT_URL}" target="_blank" style="font-size:12px;color:#1890FF;">📄 打开金山在线文档</a>',
+                unsafe_allow_html=True,
+            )
+        with col_sync2:
+            if st.button("🔄 立即同步", key="sync_kdocs_btn", use_container_width=True):
+                import urllib.request
+                REPO = "cengjinyan48-commits/overseas-complaint-dashboard"
+                TOKEN = os.getenv("GH_TOKEN", "")
+                try:
+                    data = json.dumps({"ref": "main"}).encode()
+                    req = urllib.request.Request(
+                        f"https://api.github.com/repos/{REPO}/actions/workflows/kdocs_sync.yml/dispatches",
+                        data=data,
+                        headers={
+                            "Authorization": f"token {TOKEN}",
+                            "Accept": "application/vnd.github.v3+json",
+                        },
+                        method="POST",
+                    )
+                    urllib.request.urlopen(req)
+                    st.success("✅ 同步任务已触发！预计 1-2 分钟后数据更新")
+                except Exception:
+                    st.info("💡 同步通过 GitHub Actions 自动执行（每天 8:00 / 14:00），也可在 GitHub 仓库 Actions 页面手动触发")
+        st.caption("每天自动同步 2 次，更新后看板自动刷新")
 
     # ---- Main Area ----
     # Header with source file link
