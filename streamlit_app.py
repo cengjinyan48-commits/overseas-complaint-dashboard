@@ -1454,7 +1454,7 @@ def main():
         # ---- 数据同步 ----
         st.divider()
         st.markdown("### 🔄 数据同步")
-        st.caption(f"金山在线文档 → 看板数据自动同步")
+        st.caption("金山在线文档 → 看板数据实时同步")
 
         col_sync1, col_sync2 = st.columns([2, 1])
         with col_sync1:
@@ -1464,25 +1464,27 @@ def main():
             )
         with col_sync2:
             if st.button("🔄 立即同步", key="sync_kdocs_btn", use_container_width=True):
-                import urllib.request
-                REPO = "cengjinyan48-commits/overseas-complaint-dashboard"
-                TOKEN = os.getenv("GH_TOKEN", "")
-                try:
-                    data = json.dumps({"ref": "main"}).encode()
-                    req = urllib.request.Request(
-                        f"https://api.github.com/repos/{REPO}/actions/workflows/kdocs_sync.yml/dispatches",
-                        data=data,
-                        headers={
-                            "Authorization": f"token {TOKEN}",
-                            "Accept": "application/vnd.github.v3+json",
-                        },
-                        method="POST",
-                    )
-                    urllib.request.urlopen(req)
-                    st.success("✅ 同步任务已触发！预计 1-2 分钟后数据更新")
-                except Exception:
-                    st.info("💡 同步通过 GitHub Actions 自动执行（每天 8:00 / 14:00），也可在 GitHub 仓库 Actions 页面手动触发")
-        st.caption("每天自动同步 2 次，更新后看板自动刷新")
+                with st.spinner("正在从金山文档同步数据..."):
+                    import subprocess, sys
+                    # 优先从 st.secrets 读取 KDOCS_AUTH
+                    kdocs_auth = st.secrets.get("KDOCS_AUTH", os.getenv("KDOCS_AUTH", ""))
+                    if not kdocs_auth:
+                        st.error("❌ 未配置 KDOCS_AUTH，请在 Streamlit Cloud 的 Secrets 中设置")
+                    else:
+                        script = os.path.join(os.path.dirname(__file__), "sync_from_kdocs.py")
+                        result = subprocess.run(
+                            [sys.executable, script],
+                            capture_output=True, text=True, timeout=120,
+                            env={**os.environ, "KDOCS_AUTH": kdocs_auth},
+                        )
+                        if result.returncode == 0 and os.path.exists(LOCAL_FILE):
+                            st.cache_data.clear()
+                            st.success("✅ 同步成功！数据已更新")
+                            st.rerun()
+                        else:
+                            st.error("❌ 同步失败，请稍后重试")
+                            if result.stderr:
+                                st.caption(result.stderr[-300:])
 
     # ---- Main Area ----
     # Header with source file link
