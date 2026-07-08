@@ -1,0 +1,44 @@
+name: 从金山文档同步数据
+
+on:
+  schedule:
+    # 每天 8:00 和 14:00 北京时间 (UTC+8)
+    - cron: "0 0,6 * * *"
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          pip install pandas openpyxl playwright
+          python -m playwright install chromium --with-deps
+
+      - name: 从金山文档同步
+        env:
+          KDOCS_AUTH: ${{ secrets.KDOCS_AUTH }}
+        run: python sync_from_kdocs.py
+
+      - name: 提交更新
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "2026年海外客户投诉台账.xlsx"
+          if git diff --staged --quiet; then
+            echo "数据无变化，跳过提交"
+          else
+            git commit -m "data: 自动同步金山文档 $(date +'%Y-%m-%d %H:%M')"
+            git push
+            echo "已提交并推送更新"
+          fi
