@@ -27,8 +27,9 @@ def main():
     log.info(f"已加载 {len(cookies)} 个 cookies, {len(ls_data)} 个 localStorage 条目")
 
     with sync_playwright() as p:
-        context = p.chromium.launch(headless=True)
-        page = context.new_page(accept_downloads=True)
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(accept_downloads=True)
+        page = context.new_page()
 
         # 先访问域名设置 cookies
         page.goto("https://www.kdocs.cn", timeout=15000, wait_until="domcontentloaded")
