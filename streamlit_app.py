@@ -1494,11 +1494,20 @@ def main():
 
     st.divider()
 
-    # ---- Tabs ----
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 概览仪表盘", "🔍 故障分析", "👤 质量管理", "📋 数据明细"])
+    # ---- Tabs (使用 radio + session_state 避免 widgets 触发 rerun 时 tab 丢失) ----
+    tab_labels = ["📊 概览仪表盘", "🔍 故障分析", "👤 质量管理", "📋 数据明细"]
+    if "active_tab" not in st.session_state:
+        st.session_state.active_tab = tab_labels[0]
+    active_tab = st.radio(
+        "导航",
+        tab_labels,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="active_tab",
+    )
 
     # ============ TAB 1: 概览仪表盘 ============
-    with tab1:
+    if active_tab == tab_labels[0]:
         col1, col2 = st.columns(2)
         with col1:
             st.plotly_chart(make_branch_chart(filtered), use_container_width=True, key='tab1_branch')
@@ -1512,7 +1521,7 @@ def main():
             st.plotly_chart(make_status_pie(filtered), use_container_width=True, key='tab1_status')
 
     # ============ TAB 2: 故障分析 ============
-    with tab2:
+    if active_tab == tab_labels[1]:
         col1, col2 = st.columns(2)
         with col1:
             st.plotly_chart(make_fault_pareto(filtered), use_container_width=True, key='tab2_pareto')
@@ -1527,7 +1536,7 @@ def main():
         st.dataframe(cross_sorted, use_container_width=True, height=250)
 
     # ============ TAB 3: 质量管理 ============
-    with tab3:
+    if active_tab == tab_labels[2]:
         col1, col2 = st.columns(2)
         with col1:
             st.plotly_chart(make_follower_chart(filtered), use_container_width=True, key='tab3_follower')
@@ -1565,7 +1574,7 @@ def main():
         st.dataframe(cross2, use_container_width=True, height=280)
 
     # ============ TAB 4: 数据明细 ============
-    with tab4:
+    if active_tab == tab_labels[3]:
         # 预计算选项（确保是纯 Python 字符串列表，避免 pandas/numpy 类型问题）
         fault_options = ['全部'] + sorted([str(x) for x in filtered['故障大类'].dropna().unique()])
         status_options = ['全部'] + sorted([str(x) for x in filtered['结案状态'].dropna().unique()])
