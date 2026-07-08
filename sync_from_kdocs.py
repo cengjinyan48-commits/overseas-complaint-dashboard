@@ -60,7 +60,7 @@ def main():
         )
         time.sleep(0.5)
 
-        # 下载文件：更多菜单 → 另存
+        # 下载文件
         download_done = False
 
         def on_download(dl):
@@ -71,15 +71,43 @@ def main():
 
         page.on("download", on_download)
 
+        # 策略1: 更多菜单 → 另存
         menu_btn = page.query_selector('[class*="app-header-more-btn"]')
         if menu_btn:
+            log.info("找到更多菜单按钮")
             menu_btn.click(force=True, timeout=8000)
             time.sleep(2)
+        else:
+            log.warning("未找到更多菜单按钮，尝试直接点击...")
 
-        save_btn = page.locator("text=另存").first
-        if save_btn:
-            save_btn.click(force=True, timeout=8000)
-            time.sleep(15)
+        # 尝试多种方式触发下载
+        for action in ["另存", "下载", "导出为"]:
+            if download_done:
+                break
+            try:
+                btn = page.locator(f"text={action}").first
+                if btn:
+                    log.info(f"点击 '{action}'...")
+                    btn.click(force=True, timeout=5000)
+                    time.sleep(10)
+            except Exception as e:
+                log.warning(f"点击 '{action}' 失败: {e}")
+
+        # 策略2: 如果还没触发，尝试快捷键 Ctrl+S
+        if not download_done:
+            log.info("尝试 Ctrl+S 快捷键...")
+            page.keyboard.press("Control+S")
+            time.sleep(10)
+
+        # 策略3: 尝试页面 JS 触发下载
+        if not download_done:
+            log.info("尝试 JS 触发下载...")
+            page.evaluate(
+                "() => { let a = document.createElement('a'); "
+                "a.href = window.location.href.replace('/l/', '/api/v3/office/file/') + '/export/xlsx'; "
+                "a.click(); }"
+            )
+            time.sleep(5)
 
         if download_done and os.path.exists(OUTPUT_PATH):
             import pandas as pd
@@ -91,12 +119,17 @@ def main():
                 & df["分公司"].notna()
                 & (df["分公司"].astype(str).str.strip() != "")
             ]
-            log.info(f"✅ 同步成功！{os.path.getsize(OUTPUT_PATH)} bytes, {len(valid)} 条记录")
+            log.info(
+                f"✅ 同步成功！{os.path.getsize(OUTPUT_PATH)} bytes, {len(valid)} 条记录"
+            )
         else:
-            log.error("下载未触发或文件未生成")
+            # 截图保存用于调试
+            page.screenshot(path="/tmp/kdocs_debug.png")
+            log.error("下载未触发，调试截图已保存")
             sys.exit(1)
 
         context.close()
+        browser.close()
 
 
 if __name__ == "__main__":
