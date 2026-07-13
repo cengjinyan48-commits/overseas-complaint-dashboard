@@ -18,13 +18,14 @@ AUTH_B64 = os.getenv("KDOCS_AUTH", "")
 def _ensure_chromium():
     """确保 Chromium 浏览器已安装"""
     import subprocess
-    marker = os.path.join(os.path.dirname(__file__), ".chromium_installed")
+    marker = "/tmp/.chromium_installed"
     if os.path.exists(marker):
         return
     log.info("正在安装 Chromium 浏览器（首次约30秒）...")
     result = subprocess.run(
         [sys.executable, "-m", "playwright", "install", "chromium"],
         capture_output=True, text=True, timeout=300,
+        env={**os.environ, "PLAYWRIGHT_BROWSERS_PATH": "/tmp/ms-playwright"},
     )
     if result.returncode == 0:
         with open(marker, "w") as f:
