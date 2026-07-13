@@ -1411,7 +1411,8 @@ def main():
         st.divider()
         st.markdown("### 📋 导出每周周报")
 
-        from generate_weekly_report import generate_weekly_report, get_week_dates, load_data as load_weekly_data, get_available_weeks
+        import subprocess, tempfile
+        from generate_weekly_report import get_week_dates, get_available_weeks, load_data as load_weekly_data
 
         df_all = load_weekly_data()
         available_weeks = get_available_weeks(df_all)
@@ -1431,12 +1432,23 @@ def main():
         sel_week = st.selectbox("选择周", options=week_options, index=week_options.index(default_opt) if default_opt in week_options else 0, key="weekly_report_week")
         if sel_week:
             sel_year, sel_wk = week_labels[sel_week]
-            wb = generate_weekly_report(df_all, sel_year, sel_wk)
-            buf = io.BytesIO()
-            wb.save(buf)
-            buf.seek(0)
-            st.download_button(
-                label=f"📋 导出第{sel_wk}周周报",
+            # 用 subprocess 调用脚本，绕过 Python 模块导入缓存
+            tmp_path = os.path.join(tempfile.gettempdir(), f"weekly_report_{sel_wk}.xlsx")
+            result = subprocess.run(
+                [sys.executable, os.path.join(os.path.dirname(__file__), "generate_weekly_report.py"),
+                 str(sel_year), str(sel_wk), tmp_path],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0 and os.path.exists(tmp_path):
+                with open(tmp_path, "rb") as f:
+                    buf = io.BytesIO(f.read())
+            else:
+                st.error("周报生成失败: " + (result.stderr[-200:] if result.stderr else "未知错误"))
+                buf = None
+
+            if buf:
+                st.download_button(
+                    label=f"📋 导出第{sel_wk}周周报",
                 data=buf,
                 file_name=f"海外空调客诉第{sel_wk}周周报.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

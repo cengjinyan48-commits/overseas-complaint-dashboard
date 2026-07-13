@@ -361,15 +361,21 @@ def get_available_weeks(df: pd.DataFrame) -> list:
 
 if __name__ == "__main__":
     df = load_data()
-    # 默认当前周
     today = datetime.now(BJT).date()
     iso = today.isocalendar()
     year, week = iso[0], iso[1]
+    out_path = None
 
     if len(sys.argv) >= 3:
         year, week = int(sys.argv[1]), int(sys.argv[2])
+    if len(sys.argv) >= 4:
+        out_path = sys.argv[3]
 
     wb = generate_weekly_report(df, year, week)
-    out = f"/tmp/海外空调客诉第{week}周周报.xlsx"
-    wb.save(out)
-    print(f"Generated: {out}")
+    if out_path:
+        wb.save(out_path)
+        print("Generated: " + out_path)
+    else:
+        out = "/tmp/海外空调客诉第%d周周报.xlsx" % week
+        wb.save(out)
+        print("Generated: " + out)
