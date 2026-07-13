@@ -610,7 +610,7 @@ def generate_export_zip(df, now):
         monthly = df.groupby(df['投诉日期'].dt.to_period('M').astype(str)).agg(
             投诉量=('编号_int','count'),
             已结案量=('结案状态', lambda x: x.isin(['结案','关闭']).sum()),
-            未结案量=('结案状态', lambda x: (~x.isin(['结案','关闭'])).sum()),
+            未结案量=('结案状态', lambda x: x.eq('未结案').sum()),
         ).reset_index()
         monthly.columns = ['月份','投诉量','已结案量','未结案量']
         monthly['结案率(%)'] = (monthly['已结案量'] / monthly['投诉量'] * 100).round(1)
@@ -649,7 +649,7 @@ def generate_export_zip(df, now):
         zf.writestr('09_品质负责人分布.csv', qa.to_csv(index=False, encoding='utf-8-sig'))
 
         # --- 10 超期未结案 ---
-        overdue_mask = ~df['结案状态'].isin(['结案','关闭']) & df['应结案日期'].notna() & (df['应结案日期'] < now)
+        overdue_mask = df['结案状态'].eq('未结案') & df['应结案日期'].notna() & (df['应结案日期'] < now)
         overdue = df[overdue_mask][['编号_int','国家或地区','投诉日期','应结案日期','结案状态','跟进人','问题描述']].copy()
         if len(overdue) > 0:
             overdue['超期天数'] = (now - overdue['应结案日期']).dt.days
@@ -950,10 +950,10 @@ def generate_export_ppt(df, now):
     total = len(df)
     done = len(df[df['结案状态'].isin(['结案','关闭'])])
     rate = round(done / total * 100, 1) if total > 0 else 0
-    pending = len(df[~df['结案状态'].isin(['结案','关闭'])])
+    pending = len(df[df['结案状态'].eq('未结案')])
     cycle_avg_raw = df['完成周期（天）'].dropna().mean()
     cycle_avg = round(cycle_avg_raw, 1) if pd.notna(cycle_avg_raw) else '-'
-    overdue_count = len(df[~df['结案状态'].isin(['结案','关闭']) &
+    overdue_count = len(df[df['结案状态'].eq('未结案') &
                            df['应结案日期'].notna() & (df['应结案日期'] < now)])
 
     # 封面使用 Layout 0 "空白"（自带全幅背景图 + 右上角logo）
@@ -1022,7 +1022,7 @@ def generate_export_ppt(df, now):
         ('📋 总投诉量', f'{total} 条', '2026年1-6月累计'),
         ('✅ 结案率', f'{rate}%', f'结案+关闭共{done}条'),
         ('⏱️ 平均处理周期', f'{cycle_avg} 天', '基于已完成记录'),
-        ('⚠️ 未结案', f'{pending} 条', '含暂停/未结案'),
+        ('⚠️ 未结案', f'{pending} 条', '仅计算未结案状态'),
         ('🔴 超期未结案', f'{overdue_count} 条', '已超应结案日期'),
     ]
 
@@ -1247,7 +1247,7 @@ def generate_export_ppt(df, now):
     _add_content_title(slide, "🚨 超期未结案预警 & 分公司×状态交叉表")
 
     # Overdue warnings
-    overdue = df[~df['结案状态'].isin(['结案','关闭']) &
+    overdue = df[df['结案状态'].eq('未结案') &
                  df['应结案日期'].notna() & (df['应结案日期'] < now)]
     if len(overdue) > 0:
         od_rows = []
@@ -1509,10 +1509,10 @@ def main():
     total = len(filtered)
     done = len(filtered[filtered['结案状态'].isin(['结案','关闭'])])
     rate = round(done / total * 100, 1) if total > 0 else 0
-    pending = len(filtered[~filtered['结案状态'].isin(['结案','关闭'])])
+    pending = len(filtered[filtered['结案状态'].eq('未结案')])
     cycle_avg = filtered['完成周期（天）'].dropna().mean()
     cycle_avg = round(cycle_avg, 1) if pd.notna(cycle_avg) else '-'
-    overdue = len(filtered[~filtered['结案状态'].isin(['结案','关闭']) &
+    overdue = len(filtered[filtered['结案状态'].eq('未结案') &
                            filtered['应结案日期'].notna() &
                            (filtered['应结案日期'] < now)])
 
@@ -1585,7 +1585,7 @@ def main():
 
         with col4:
             st.markdown("#### 🚨 超期未结案预警")
-            overdue_df = filtered[~filtered['结案状态'].isin(['结案','关闭']) &
+            overdue_df = filtered[filtered['结案状态'].eq('未结案') &
                                   filtered['应结案日期'].notna() &
                                   (filtered['应结案日期'] < now)]
 
