@@ -1515,7 +1515,7 @@ def main():
         with col_sync2:
             if st.button("🔄 立即同步", key="sync_kdocs_btn", use_container_width=True):
                 with st.spinner("正在从金山文档同步数据..."):
-                    import subprocess, sys
+                    import subprocess
                     # 优先从 st.secrets 读取 KDOCS_AUTH
                     kdocs_auth = st.secrets.get("KDOCS_AUTH", os.getenv("KDOCS_AUTH", ""))
                     if not kdocs_auth:
