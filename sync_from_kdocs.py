@@ -15,10 +15,31 @@ OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 AUTH_B64 = os.getenv("KDOCS_AUTH", "")
 
 
+def _ensure_chromium():
+    """确保 Chromium 浏览器已安装"""
+    import subprocess
+    marker = os.path.join(os.path.dirname(__file__), ".chromium_installed")
+    if os.path.exists(marker):
+        return
+    log.info("正在安装 Chromium 浏览器（首次约30秒）...")
+    result = subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True, text=True, timeout=300,
+    )
+    if result.returncode == 0:
+        with open(marker, "w") as f:
+            f.write("ok")
+        log.info("Chromium 安装完成")
+    else:
+        log.warning("Chromium 安装失败: " + result.stderr[-200:])
+
+
 def main():
     if not AUTH_B64:
         log.error("KDOCS_AUTH 环境变量未设置！")
         sys.exit(1)
+
+    _ensure_chromium()
 
     # 解码认证信息
     auth_bundle = json.loads(base64.b64decode(AUTH_B64).decode())
