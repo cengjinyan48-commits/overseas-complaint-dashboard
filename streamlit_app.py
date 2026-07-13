@@ -1525,7 +1525,7 @@ def main():
                         result = subprocess.run(
                             [sys.executable, script],
                             capture_output=True, text=True, timeout=120,
-                            env={**os.environ, "KDOCS_AUTH": kdocs_auth},
+                            env={**os.environ, "KDOCS_AUTH": kdocs_auth, "PLAYWRIGHT_BROWSERS_PATH": "/tmp/ms-playwright"},
                         )
                         if result.returncode == 0 and os.path.exists(LOCAL_FILE):
                             st.cache_data.clear()
