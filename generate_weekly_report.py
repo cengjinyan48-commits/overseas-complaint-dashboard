@@ -230,7 +230,95 @@ def generate_weekly_report(df: pd.DataFrame, year: int, week: int) -> Workbook:
         ws2.column_dimensions[get_column_letter(i)].width = w
 
     # ============================================
-    # Sheet 3 & 4: 赔偿费用 / 材料费用（空模板）
+    # Sheet 3: 情况通报
+    # ============================================
+    ws3 = wb.create_sheet("情况通报")
+    ws3.column_dimensions['A'].width = 100
+    ws3.sheet_properties.pageSetUpPr = None  # 允许自由文本布局
+
+    bullet_font = Font(name="微软雅黑", size=11)
+    title_font = Font(name="微软雅黑", size=14, bold=True)
+    section_font = Font(name="微软雅黑", size=12, bold=True)
+    body_font = Font(name="微软雅黑", size=11)
+
+    def make_summary(desc_str):
+        """从问题描述中提取核心摘要（客户+问题一句话）"""
+        if not desc_str or not isinstance(desc_str, str):
+            return ""
+        import re
+        # 去掉【】标记和方括号元数据
+        clean = re.sub(r'【[^】]+】', '', desc_str)
+        clean = re.sub(r'\[[^\]]+\][^\n]*', '', clean)
+        clean = re.sub(r'[\n\r]+', '，', clean)
+        clean = re.sub(r'，+', '，', clean)
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        # 取第一句核心内容，限制60字
+        if len(clean) > 60:
+            # 尝试在60字内找句号结束
+            cut = clean[:60]
+            last_period = max(cut.rfind('。'), cut.rfind('，'))
+            if last_period > 20:
+                clean = clean[:last_period]
+            else:
+                clean = cut + "..."
+        return clean
+
+    def write_bulletin_row(ws, row, text, font_style=None, height=None):
+        cell = ws.cell(row=row, column=1, value=text)
+        cell.font = font_style or body_font
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        if height:
+            ws.row_dimensions[row].height = height
+
+    r = 1
+    write_bulletin_row(ws3, r, f"海外ODM家用空调客诉情况通报（{year}年第{week}周）", title_font, 30)
+    r += 1
+    write_bulletin_row(ws3, r, f"（{start.strftime('%Y.%m.%d')} — {end.strftime('%Y.%m.%d')}）", body_font, 20)
+    r += 2
+
+    overdue_df_for_bulletin = df[
+        df['结案状态'].eq('未结案') &
+        df['应结案日期'].notna() &
+        (df['应结案日期'] < end_dt)
+    ]
+
+    sections = [
+        ("一、本周新增客诉情况", new_df, "本周新增客诉"),
+        ("二、正常跟进中客诉", follow_df, "本周正常跟进客诉"),
+        ("三、超期未结案客诉", overdue_df_for_bulletin, "本周超期未结案客诉"),
+        ("四、本周结案", closed_df, "本周结案客诉"),
+    ]
+
+    for sec_title, sec_df, sec_label in sections:
+
+        count = len(sec_df)
+        write_bulletin_row(ws3, r, f"{sec_title}", section_font, 24)
+        r += 1
+        write_bulletin_row(ws3, r, f"{sec_label}{count}单:", body_font, 20)
+        r += 1
+
+        if count == 0:
+            write_bulletin_row(ws3, r, "  无。", body_font, 20)
+            r += 1
+        else:
+            for i, (_, rec) in enumerate(sec_df.iterrows()):
+                country = str(rec.get("国家或地区", "")) if pd.notna(rec.get("国家或地区", "")) else ""
+                desc = make_summary(str(rec.get("问题描述", "")))
+                # 避免国家名重复（描述开头可能已含国家名）
+                if country and desc.startswith(country):
+                    text = "  %d、%s" % (i + 1, desc)
+                elif country:
+                    text = "  %d、%s%s" % (i + 1, country, desc)
+                else:
+                    text = "  %d、%s" % (i + 1, desc)
+                write_bulletin_row(ws3, r, text, bullet_font, 22)
+                r += 1
+        r += 1
+
+    ws3.row_dimensions[r].height = 20
+
+    # ============================================
+    # Sheet 4 & 5: 赔偿费用 / 材料费用（空模板）
     # ============================================
     for sname, stitle in [("赔偿费用", "赔偿费"), ("材料费用", "售后材料费")]:
         wsx = wb.create_sheet(sname)
