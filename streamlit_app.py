@@ -1407,6 +1407,43 @@ def main():
         )
         st.caption("8页PPT：封面 + KPI摘要 + 区域/趋势/故障/质量分析 + 改进建议")
 
+        # ---- 周报导出 ----
+        st.divider()
+        st.markdown("### 📋 导出每周周报")
+
+        from generate_weekly_report import generate_weekly_report, get_week_dates, load_data as load_weekly_data, get_available_weeks
+
+        df_all = load_weekly_data()
+        available_weeks = get_available_weeks(df_all)
+        week_options = [f"{y}年第{w}周 ({get_week_dates(y,w)[0].strftime('%m/%d')}-{get_week_dates(y,w)[1].strftime('%m/%d')})" for y, w in available_weeks]
+        week_labels = {opt: (y, w) for opt, (y, w) in zip(week_options, available_weeks)}
+
+        today = datetime.now(BJT).date()
+        iso = today.isocalendar()
+        default_opt = None
+        for opt, (y, w) in week_labels.items():
+            if y == iso[0] and w == iso[1]:
+                default_opt = opt
+                break
+        if default_opt is None and week_options:
+            default_opt = week_options[-1]
+
+        sel_week = st.selectbox("选择周", options=week_options, index=week_options.index(default_opt) if default_opt in week_options else 0, key="weekly_report_week")
+        if sel_week:
+            sel_year, sel_wk = week_labels[sel_week]
+            wb = generate_weekly_report(df_all, sel_year, sel_wk)
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            st.download_button(
+                label=f"📋 导出第{sel_wk}周周报",
+                data=buf,
+                file_name=f"海外空调客诉第{sel_wk}周周报.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+            st.caption("包含四个模块：本周新增 / 正常跟进 / 本周结案 / 汇总")
+
         # ---- 结案预警 ----
         st.divider()
         st.markdown("### 🚨 结案预警通知")
