@@ -64,7 +64,10 @@
 ├── assets/
 │   └── TCL_template.pptx            # TCL 品牌 PPT 模板
 ├── .streamlit/
-│   └── config.toml                   # Streamlit 主题配置
+│   ├── config.toml                   # Streamlit 主题配置
+│   └── secrets.toml                  # Streamlit Cloud Secrets (本地，不入git)
+├── packages.txt                      # Chromium 系统依赖
+├── requirements.txt                  # Python 依赖
 ├── .github/workflows/
 │   ├── warning_email.yml             # 结案预警定时任务
 │   └── kdocs_sync.yml               # 金山文档同步定时任务
@@ -113,13 +116,23 @@ streamlit run streamlit_app.py
 | `KDOCS_AUTH` | 金山文档完整认证信息（cookies + localStorage） |
 | `GH_PAT` | GitHub Personal Access Token（用于自动提交推送） |
 
+### Streamlit Cloud Secrets 配置
+
+在 [Streamlit Cloud 控制台](https://share.streamlit.io) 的 App Settings → Secrets 中配置：
+
+```toml
+KDOCS_AUTH = "<base64-encoded kdocs auth bundle>"
+```
+
+该值用于「立即同步」按钮的 Playwright 浏览器自动化登录金山文档。
+
 ---
 
 ## 数据更新方式
 
 | 方式 | 操作 |
 |------|------|
-| 🟢 **金山在线文档** | 编辑金山文档 → 自动同步（每天2次）/ 侧边栏点击「立即同步」 |
+| 🟢 **金山在线文档** | 编辑金山文档 → 自动同步（每小时）/ 侧边栏点击「立即同步」 |
 | 🟡 **本地上传** | 侧边栏拖拽 Excel 文件 → 即时刷新看板 |
 | 🔵 **直接替换** | 替换仓库中 `2026年海外客户投诉台账.xlsx` → git push |
 
