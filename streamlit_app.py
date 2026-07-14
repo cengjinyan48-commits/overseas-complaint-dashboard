@@ -290,20 +290,33 @@ def make_monthly_trend(df):
 
 
 def make_status_pie(df):
-    """结案状态环形图"""
-    counts = df['结案状态'].value_counts().reset_index()
-    counts.columns = ['状态','数量']
+    """结案状态环形图 — 结案+关闭合并为「已结案」，与结案率口径一致"""
+    # 合并 结案+关闭 → 已结案
+    done = int((df['结案状态'].isin(['结案','关闭'])).sum())
+    pending = int((df['结案状态'] == '未结案').sum())
+    paused = int((df['结案状态'] == '暂停').sum())
+    other = len(df) - done - pending - paused
+
+    labels, values, colors = [], [], []
+    if done > 0:
+        labels.append('已结案'); values.append(done); colors.append('#27AE60')
+    if pending > 0:
+        labels.append('未结案'); values.append(pending); colors.append('#F39C12')
+    if paused > 0:
+        labels.append('暂停'); values.append(paused); colors.append('#E74C3C')
+    if other > 0:
+        labels.append('其他'); values.append(other); colors.append('#95A5A6')
 
     fig = go.Figure(go.Pie(
-        labels=counts['状态'], values=counts['数量'],
+        labels=labels, values=values,
         hole=0.55,
-        marker_colors=[STATUS_COLORS.get(s, '#999') for s in counts['状态']],
+        marker_colors=colors,
         textinfo='label+percent',
         textfont_size=13,
         hovertemplate='%{label}: %{value} 条 (%{percent})<extra></extra>',
     ))
     fig.update_layout(
-        title='结案状态分布',
+        title='结案状态分布（已结案 = 结案 + 关闭）',
         height=380,
         margin=dict(l=10, r=10, t=40, b=10),
     )
