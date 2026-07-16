@@ -1545,7 +1545,6 @@ def main():
                         if result.returncode == 0 and os.path.exists(LOCAL_FILE):
                             st.cache_data.clear()
                             # 同步成功后自动转换天极标准化数据底表
-                            st.success("✅ 同步成功！正在生成天极数据底表...")
                             convert_script = os.path.join(os.path.dirname(__file__), "convert_for_taiji.py")
                             taiji_output = os.path.join(os.path.dirname(__file__), "海外客诉台账_标准化数据.xlsx")
                             convert_result = subprocess.run(
@@ -1555,7 +1554,6 @@ def main():
                             if convert_result.returncode == 0 and os.path.exists(taiji_output):
                                 st.session_state.taiji_file_ready = True
                                 st.session_state.taiji_output_path = taiji_output
-                                st.success("✅ 天极数据底表已生成！点击下方按钮下载")
                             else:
                                 st.warning("⚠️ 天极数据底表生成失败，请重试")
                             st.rerun()
@@ -1564,18 +1562,19 @@ def main():
                             if result.stderr:
                                 st.caption(result.stderr[-300:])
 
-            # 天极数据底表下载按钮
+            # 天极数据底表下载按钮（独立于 if st.button，每次渲染都检查）
             if st.session_state.get("taiji_file_ready"):
                 taiji_path = st.session_state.get("taiji_output_path")
                 if taiji_path and os.path.exists(taiji_path):
                     with open(taiji_path, "rb") as f:
-                        st.download_button(
-                            label="📥 下载天极标准化数据底表 (.xlsx)",
-                            data=f,
-                            file_name="海外客诉台账_标准化数据.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
-                        )
+                        file_bytes = f.read()
+                    st.download_button(
+                        label="📥 下载天极标准化数据底表 (.xlsx)",
+                        data=file_bytes,
+                        file_name="海外客诉台账_标准化数据.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
                     st.caption("下载后直接上传到天极系统即可更新数据看板")
 
     # ---- Main Area ----
