@@ -1537,38 +1537,39 @@ def main():
             )
         with col_sync2:
             if st.button("🔄 立即同步", key="sync_kdocs_btn", use_container_width=True):
-                with st.spinner("正在从石墨文档同步数据..."):
-                    import subprocess
-                    # 优先从 st.secrets 读取 KDOCS_AUTH
-                    kdocs_auth = st.secrets.get("SHIMO_AUTH", os.getenv("SHIMO_AUTH", ""))
-                    if not kdocs_auth:
-                        st.error("❌ 未配置 KDOCS_AUTH，请在 Streamlit Cloud 的 Secrets 中设置")
+                with st.spinner("正在从 GitHub 下载最新数据..."):
+                    import urllib.request
+
+                    GITHUB_RAW = "https://raw.githubusercontent.com/cengjinyan48-commits/overseas-complaint-dashboard/main"
+
+                    sync_ok = True
+                    for fname, label in [("2026年海外客户投诉台账.xlsx", "台账数据"), ("海外客诉台账_标准化数据.xlsx", "天极数据底表")]:
+                        url = f"{GITHUB_RAW}/{fname}"
+                        local_path = os.path.join(os.path.dirname(__file__), fname)
+                        try:
+                            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=30) as resp:
+                                data = resp.read()
+                                if len(data) > 1000 and data[:2] == b"PK":
+                                    with open(local_path, "wb") as f:
+                                        f.write(data)
+                                else:
+                                    st.warning(f"⚠️ {label} 下载无效，稍后重试")
+                                    sync_ok = False
+                        except Exception as e:
+                            st.warning(f"⚠️ {label} 下载失败: {e}")
+                            sync_ok = False
+
+                    if sync_ok:
+                        st.cache_data.clear()
+                        taiji_path = os.path.join(os.path.dirname(__file__), "海外客诉台账_标准化数据.xlsx")
+                        if os.path.exists(taiji_path):
+                            st.session_state.taiji_file_ready = True
+                            st.session_state.taiji_output_path = taiji_path
+                        st.success("✅ 数据已同步！")
+                        st.rerun()
                     else:
-                        script = os.path.join(os.path.dirname(__file__), "sync_from_shimo.py")
-                        result = subprocess.run(
-                            [sys.executable, script],
-                            capture_output=True, text=True, timeout=120,
-                            env={**os.environ, "SHIMO_AUTH": kdocs_auth, "PLAYWRIGHT_BROWSERS_PATH": "/tmp/ms-playwright"},
-                        )
-                        if result.returncode == 0 and os.path.exists(LOCAL_FILE):
-                            st.cache_data.clear()
-                            # 同步成功后自动转换天极标准化数据底表
-                            convert_script = os.path.join(os.path.dirname(__file__), "convert_for_taiji.py")
-                            taiji_output = os.path.join(os.path.dirname(__file__), "海外客诉台账_标准化数据.xlsx")
-                            convert_result = subprocess.run(
-                                [sys.executable, convert_script],
-                                capture_output=True, text=True, timeout=30,
-                            )
-                            if convert_result.returncode == 0 and os.path.exists(taiji_output):
-                                st.session_state.taiji_file_ready = True
-                                st.session_state.taiji_output_path = taiji_output
-                            else:
-                                st.warning("⚠️ 天极数据底表生成失败，请重试")
-                            st.rerun()
-                        else:
-                            st.error("❌ 同步失败，请稍后重试")
-                            if result.stderr:
-                                st.caption(result.stderr[-300:])
+                        st.error("❌ 部分文件同步失败，请稍后重试")
 
             # 天极数据底表下载按钮（独立于 if st.button，每次渲染都检查）
             if st.session_state.get("taiji_file_ready"):
