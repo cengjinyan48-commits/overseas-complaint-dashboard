@@ -106,30 +106,28 @@ def _process_raw_df(df):
 
 
 def load_data(uploaded_bytes=None):
-    """加载数据: 上传文件 > 本地Excel"""
+    """加载数据: 上传文件 > 本地Excel。失败时返回None+错误信息，不崩溃"""
     source_label = ""
+    error_msg = None
 
     if uploaded_bytes is not None:
         try:
             df = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name='所有客诉', header=1, engine='openpyxl')
             source_label = "📤 已上传文件"
-        except Exception:
-            st.error("❌ 无法读取上传的文件，请确认格式正确")
-            st.stop()
+        except Exception as e:
+            return None, source_label, f"上传文件读取失败: {e}"
     else:
         try:
             if not os.path.exists(LOCAL_FILE):
-                st.error(f"❌ 数据文件不存在: {LOCAL_FILE}")
-                st.stop()
+                return None, source_label, "数据文件不存在，请点击「立即同步」从石墨文档获取最新数据"
             df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1, engine='openpyxl')
             source_label = "石墨文档同步数据"
         except Exception as e:
-            st.error(f"❌ 无法加载数据源: {e}")
-            st.stop()
+            return None, source_label, f"数据文件损坏，请点击「立即同步」重新获取: {e}"
 
     df = _process_raw_df(df)
     df.attrs['source'] = source_label
-    return df
+    return df, source_label, None
 
 
 def apply_filters(df):
@@ -1388,7 +1386,14 @@ def main():
 
     # Load data from session state or local file
     upload_bytes = st.session_state.get('uploaded_bytes')
-    df = load_data(upload_bytes)
+    df, source_label, load_error = load_data(upload_bytes)
+
+    # If data loading failed, show error but keep sidebar + sync button visible
+    if load_error:
+        st.error(f"❌ {load_error}")
+        with st.sidebar:
+            pass  # sidebar widgets already rendered above
+        st.stop()
 
     # Continue sidebar filters
     with st.sidebar:
