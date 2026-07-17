@@ -111,7 +111,7 @@ def load_data(uploaded_bytes=None):
 
     if uploaded_bytes is not None:
         try:
-            df = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name='所有客诉', header=1)
+            df = pd.read_excel(io.BytesIO(uploaded_bytes), sheet_name='所有客诉', header=1, engine='openpyxl')
             source_label = "📤 已上传文件"
         except Exception:
             st.error("❌ 无法读取上传的文件，请确认格式正确")
@@ -121,7 +121,7 @@ def load_data(uploaded_bytes=None):
             if not os.path.exists(LOCAL_FILE):
                 st.error(f"❌ 数据文件不存在: {LOCAL_FILE}")
                 st.stop()
-            df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1)
+            df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1, engine='openpyxl')
             source_label = "石墨文档同步数据"
         except Exception as e:
             st.error(f"❌ 无法加载数据源: {e}")

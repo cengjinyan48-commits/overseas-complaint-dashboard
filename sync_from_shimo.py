@@ -161,7 +161,7 @@ def main():
         # 验证结果：只要文件存在且大于 1KB 就算成功
         if os.path.exists(OUTPUT_PATH) and os.path.getsize(OUTPUT_PATH) > 1000:
             import pandas as pd
-            df = pd.read_excel(OUTPUT_PATH, sheet_name="所有客诉", header=1)
+            df = pd.read_excel(OUTPUT_PATH, sheet_name="所有客诉", header=1, engine='openpyxl')
             df["_n"] = pd.to_numeric(df["编号"], errors="coerce")
             valid = df[df["_n"].notna() & df["分公司"].notna() & (df["分公司"].astype(str).str.strip() != "")]
             log.info(f"✅ 同步成功！{os.path.getsize(OUTPUT_PATH)} bytes, {len(valid)} 条记录")
