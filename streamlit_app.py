@@ -118,10 +118,13 @@ def load_data(uploaded_bytes=None):
             st.stop()
     else:
         try:
+            if not os.path.exists(LOCAL_FILE):
+                st.error(f"❌ 数据文件不存在: {LOCAL_FILE}")
+                st.stop()
             df = pd.read_excel(LOCAL_FILE, sheet_name='所有客诉', header=1)
-            source_label = "默认数据"
-        except Exception:
-            st.error("❌ 无法加载数据源，请检查文件")
+            source_label = "石墨文档同步数据"
+        except Exception as e:
+            st.error(f"❌ 无法加载数据源: {e}")
             st.stop()
 
     df = _process_raw_df(df)
