@@ -62,7 +62,7 @@ st.set_page_config(
 # Data Source Config
 # ============================================================
 LOCAL_FILE = os.path.join(os.path.dirname(__file__), "2026年海外客户投诉台账.xlsx")
-KDOCS_EDIT_URL = "https://www.kdocs.cn/l/cjP6zkIRj17V"
+SHIMO_EDIT_URL = "https://teamwork.getech.cn/shimo-h5/shimo-edit/e1898e9f4b794a4786fcdfead749736c"
 CSV_COLS = [
     '编号','分公司','国家或地区','是否大客户','投诉日期','应结案日期','实际完成日期',
     '完成周期（天）','机型属性','故障比例','问题描述','客户诉求','跟进人','处理类型',
@@ -1519,12 +1519,12 @@ def main():
         # ---- 数据同步 ----
         st.divider()
         st.markdown("### 🔄 数据同步")
-        st.caption("金山在线文档 → 看板数据实时同步")
+        st.caption("石墨在线文档 → 看板数据实时同步")
 
         col_sync1, col_sync2 = st.columns([2, 1])
         with col_sync1:
             st.markdown(
-                f'<a href="{KDOCS_EDIT_URL}" target="_blank" style="font-size:12px;color:#1890FF;">📄 打开金山在线文档</a>',
+                f'<a href="{SHIMO_EDIT_URL}" target="_blank" style="font-size:12px;color:#1890FF;">📄 打开石墨在线文档</a>',
                 unsafe_allow_html=True,
             )
         with col_sync2:
@@ -1532,15 +1532,15 @@ def main():
                 with st.spinner("正在从金山文档同步数据..."):
                     import subprocess
                     # 优先从 st.secrets 读取 KDOCS_AUTH
-                    kdocs_auth = st.secrets.get("KDOCS_AUTH", os.getenv("KDOCS_AUTH", ""))
+                    kdocs_auth = st.secrets.get("SHIMO_AUTH", st.secrets.get("KDOCS_AUTH", os.getenv("SHIMO_AUTH", os.getenv("KDOCS_AUTH", ""))))
                     if not kdocs_auth:
                         st.error("❌ 未配置 KDOCS_AUTH，请在 Streamlit Cloud 的 Secrets 中设置")
                     else:
-                        script = os.path.join(os.path.dirname(__file__), "sync_from_kdocs.py")
+                        script = os.path.join(os.path.dirname(__file__), "sync_from_shimo.py")
                         result = subprocess.run(
                             [sys.executable, script],
                             capture_output=True, text=True, timeout=120,
-                            env={**os.environ, "KDOCS_AUTH": kdocs_auth, "PLAYWRIGHT_BROWSERS_PATH": "/tmp/ms-playwright"},
+                            env={**os.environ, "SHIMO_AUTH": kdocs_auth, "PLAYWRIGHT_BROWSERS_PATH": "/tmp/ms-playwright"},
                         )
                         if result.returncode == 0 and os.path.exists(LOCAL_FILE):
                             st.cache_data.clear()
@@ -1588,9 +1588,9 @@ def main():
             <p style="color:#aaa;margin:2px 0 0;font-size:12px;">数据源: {source} · 每30秒自动刷新</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <a href="{KDOCS_EDIT_URL}" target="_blank" style="background:rgba(255,255,255,0.15);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.3);transition:all 0.2s;white-space:nowrap;"
+            <a href="{SHIMO_EDIT_URL}" target="_blank" style="background:rgba(255,255,255,0.15);color:#fff;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,0.3);transition:all 0.2s;white-space:nowrap;"
                onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'">
-               📄 金山在线文档
+               📄 石墨在线文档
             </a>
         </div>
     </div>

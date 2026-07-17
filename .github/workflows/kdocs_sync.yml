@@ -1,4 +1,4 @@
-name: 从金山文档同步数据
+name: 从石墨文档同步数据
 
 on:
   schedule:
@@ -30,10 +30,10 @@ jobs:
           pip install pandas openpyxl playwright
           python -m playwright install chromium --with-deps
 
-      - name: 从金山文档同步
+      - name: 从石墨文档同步
         env:
-          KDOCS_AUTH: ${{ secrets.KDOCS_AUTH }}
-        run: python sync_from_kdocs.py
+          SHIMO_AUTH: ${{ secrets.SHIMO_AUTH }}
+        run: python sync_from_shimo.py
         continue-on-error: true
 
       - name: 转换为天极标准化数据底表
@@ -50,7 +50,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "数据无变化，跳过提交"
           else
-            git commit -m "data: 自动同步金山文档 $(date +'%Y-%m-%d %H:%M')"
+            git commit -m "data: 自动同步石墨文档 $(date +'%Y-%m-%d %H:%M')"
             git push
             echo "已提交并推送更新"
           fi

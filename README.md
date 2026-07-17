@@ -26,7 +26,7 @@
 - **仅计算未结案**: 超期预警只计算「结案状态=未结案」的记录，排除「暂停」「结案」「关闭」
 
 ### 🔄 数据同步
-- **金山文档自动同步**: GitHub Actions 每小时自动从金山在线文档拉取最新数据
+- **石墨文档自动同步**: GitHub Actions 每小时自动从石墨在线文档拉取最新数据
 - **手动上传**: 侧边栏拖拽上传 Excel 即时刷新
 - **侧边栏一键触发**: 点击「立即同步」按钮手动触发同步任务
 
@@ -63,7 +63,8 @@
 ```
 ├── streamlit_app.py                  # 主应用（Streamlit 看板）
 ├── send_warning_emails.py            # 结案预警邮件脚本
-├── sync_from_kdocs.py               # 金山文档自动同步脚本
+├── sync_from_shimo.py               # 石墨文档自动同步脚本
+├── sync_from_kdocs.py               # 金山文档自动同步脚本（旧，已弃用）
 ├── convert_for_taiji.py              # 天极标准化数据底表转换脚本
 ├── generate_weekly_report.py         # 每周周报生成器
 ├── generate_dashboard.py             # 本地 HTML 看板生成器
@@ -113,15 +114,15 @@ streamlit run streamlit_app.py
 | 任务 | 时间 | 说明 |
 |------|------|------|
 | 📧 结案预警邮件 | 每天 9:00 (BJT) | 扫描超期未结案 → 邮件通知跟进人 |
-| 🔄 金山文档同步 + 天极转换 | 每小时 (BJT) | 从金山文档下载最新 Excel → 自动转换为天极标准化数据底表 → 提交
+| 🔄 石墨文档同步 + 天极转换 | 每小时 (BJT) | 从石墨文档下载最新 Excel → 自动转换为天极标准化数据底表 → 提交 |
 
 ### GitHub Secrets 配置
 
 | Secret | 说明 |
 |--------|------|
 | `SMTP_SERVER` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | 企业邮箱 SMTP 配置 |
-| `KDOCS_COOKIES` | 金山文档登录态 cookies |
-| `KDOCS_AUTH` | 金山文档完整认证信息（cookies + localStorage） |
+| `KDOCS_COOKIES` | 石墨文档登录态 cookies（已弃用，保留兼容） |
+| `SHIMO_AUTH` | 石墨文档完整认证信息（cookies + localStorage） |
 | `GH_PAT` | GitHub Personal Access Token（用于自动提交推送） |
 
 ### Streamlit Cloud Secrets 配置
@@ -129,7 +130,7 @@ streamlit run streamlit_app.py
 在 [Streamlit Cloud 控制台](https://share.streamlit.io) 的 App Settings → Secrets 中配置：
 
 ```toml
-KDOCS_AUTH = "<base64-encoded kdocs auth bundle>"
+SHIMO_AUTH = "<base64-encoded shimo auth bundle>"
 ```
 
 该值用于「立即同步」按钮的 Playwright 浏览器自动化登录金山文档。
@@ -140,7 +141,7 @@ KDOCS_AUTH = "<base64-encoded kdocs auth bundle>"
 
 | 方式 | 操作 |
 |------|------|
-| 🟢 **金山在线文档** | 编辑金山文档 → 侧边栏点击「立即同步」→ 自动生成天极数据底表 → 下载上传天极 |
+| 🟢 **石墨在线文档** | 编辑石墨文档 → 侧边栏点击「立即同步」→ 自动生成天极数据底表 → 下载上传天极 |
 | 🟡 **本地上传** | 侧边栏拖拽 Excel 文件 → 即时刷新看板 |
 | 🔵 **直接替换** | 替换仓库中 `2026年海外客户投诉台账.xlsx` → git push |
 | 🏢 **天极看板更新** | 下载 `海外客诉台账_标准化数据.xlsx` → 上传到天极系统 → 刷新数据 |
