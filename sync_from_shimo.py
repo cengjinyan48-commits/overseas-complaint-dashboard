@@ -44,15 +44,13 @@ def main():
 
     _ensure_chromium()
 
-    # 解码认证信息，兼容 Python 3.14 的严格 base64 检查
+    # 解码认证信息
     raw = AUTH_B64.strip()
-    # 移除可能的换行符和空白字符
     raw = "".join(raw.split())
     try:
         auth_bundle = json.loads(base64.b64decode(raw).decode("utf-8"))
     except Exception as e:
         log.error(f"SHIMO_AUTH 解码失败: {e}")
-        log.error("请重新运行 get_shimo_auth.py 获取新的认证信息")
         sys.exit(1)
 
     cookies = auth_bundle.get("cookies", [])
@@ -64,15 +62,12 @@ def main():
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
-        # 先访问域名设置 cookies
         page.goto("https://teamwork.getech.cn", timeout=15000, wait_until="domcontentloaded")
         context.add_cookies(cookies)
 
-        # 打开石墨文档
         page.goto(SHIMO_URL, timeout=30000, wait_until="domcontentloaded")
         time.sleep(5)
 
-        # 恢复 localStorage
         page.evaluate(
             "(items) => { for (let k in items) { try { localStorage.setItem(k, items[k]); } catch(e) {} } }",
             ls_data,
@@ -105,12 +100,6 @@ def main():
                         return 'clicked: ' + text;
                     }
                 }
-                // 尝试找更多菜单
-                const moreBtn = document.querySelector('[class*="more"], [class*="More"], [class*="menu"]');
-                if (moreBtn) {
-                    moreBtn.click();
-                    return 'clicked more menu';
-                }
                 return 'no button found';
             }
         """)
@@ -135,18 +124,17 @@ def main():
             log.info(f"导出选项: {exported}")
             time.sleep(5)
 
-        # 策略3: 尝试 Ctrl+S 触发下载
+        # 策略3: 尝试 Ctrl+S
         if not download_done:
             log.info("尝试 Ctrl+S...")
             page.keyboard.press("Control+S")
             time.sleep(5)
 
-        # 策略4: 尝试通过 API 导出
+        # 策略4: 尝试 API 导出
         if not download_done:
             log.info("尝试 API 导出...")
             page.evaluate("""
                 () => {
-                    // 石墨文档企业版导出 API
                     const fileId = window.location.pathname.split('/').pop();
                     const exportUrl = '/shimo-h5/api/v1/files/' + fileId + '/export';
                     fetch(exportUrl, {
@@ -164,8 +152,14 @@ def main():
             """)
             time.sleep(5)
 
-        # 验证结果
-        if download_done and os.path.exists(OUTPUT_PATH) and os.path.getsize(OUTPUT_PATH) > 1000:
+        # 等待下载完成
+        for _ in range(10):
+            if download_done:
+                break
+            time.sleep(1)
+
+        # 验证结果：只要文件存在且大于 1KB 就算成功
+        if os.path.exists(OUTPUT_PATH) and os.path.getsize(OUTPUT_PATH) > 1000:
             import pandas as pd
             df = pd.read_excel(OUTPUT_PATH, sheet_name="所有客诉", header=1)
             df["_n"] = pd.to_numeric(df["编号"], errors="coerce")
@@ -173,10 +167,7 @@ def main():
             log.info(f"✅ 同步成功！{os.path.getsize(OUTPUT_PATH)} bytes, {len(valid)} 条记录")
         else:
             page.screenshot(path="/tmp/shimo_debug.png")
-            log.error("下载未触发，调试截图已保存")
-            # 输出页面结构帮助调试
-            body_text = page.evaluate("() => document.body.innerText.substring(0, 500)")
-            log.info(f"页面内容预览: {body_text}")
+            log.error("下载失败，调试截图已保存")
             sys.exit(1)
 
         context.close()

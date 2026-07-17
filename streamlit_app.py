@@ -1366,9 +1366,9 @@ def main():
             st.session_state.taiji_file_ready = False
 
         uploaded_file = st.file_uploader(
-            "从金山文档导出Excel后拖拽上传",
+            "从石墨文档导出Excel后拖拽上传",
             type=['xlsx'],
-            help="金山文档 → 导出为Excel → 拖到此处 → 看板立即刷新",
+            help="石墨文档 → 导出为Excel → 拖到此处 → 看板立即刷新",
             key='excel_uploader',
         )
         if uploaded_file:
@@ -1529,7 +1529,7 @@ def main():
             )
         with col_sync2:
             if st.button("🔄 立即同步", key="sync_kdocs_btn", use_container_width=True):
-                with st.spinner("正在从金山文档同步数据..."):
+                with st.spinner("正在从石墨文档同步数据..."):
                     import subprocess
                     # 优先从 st.secrets 读取 KDOCS_AUTH
                     kdocs_auth = st.secrets.get("SHIMO_AUTH", os.getenv("SHIMO_AUTH", ""))
