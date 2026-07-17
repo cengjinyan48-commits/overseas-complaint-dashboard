@@ -1539,12 +1539,13 @@ def main():
             if st.button("🔄 立即同步", key="sync_kdocs_btn", use_container_width=True):
                 with st.spinner("正在从 GitHub 下载最新数据..."):
                     import urllib.request
+                    import urllib.parse
 
                     GITHUB_RAW = "https://raw.githubusercontent.com/cengjinyan48-commits/overseas-complaint-dashboard/main"
 
                     sync_ok = True
                     for fname, label in [("2026年海外客户投诉台账.xlsx", "台账数据"), ("海外客诉台账_标准化数据.xlsx", "天极数据底表")]:
-                        url = f"{GITHUB_RAW}/{fname}"
+                        url = f"{GITHUB_RAW}/{urllib.parse.quote(fname)}"
                         local_path = os.path.join(os.path.dirname(__file__), fname)
                         try:
                             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
