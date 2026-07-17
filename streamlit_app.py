@@ -1532,7 +1532,7 @@ def main():
                 with st.spinner("正在从金山文档同步数据..."):
                     import subprocess
                     # 优先从 st.secrets 读取 KDOCS_AUTH
-                    kdocs_auth = st.secrets.get("SHIMO_AUTH", st.secrets.get("KDOCS_AUTH", os.getenv("SHIMO_AUTH", os.getenv("KDOCS_AUTH", ""))))
+                    kdocs_auth = st.secrets.get("SHIMO_AUTH", os.getenv("SHIMO_AUTH", ""))
                     if not kdocs_auth:
                         st.error("❌ 未配置 KDOCS_AUTH，请在 Streamlit Cloud 的 Secrets 中设置")
                     else:

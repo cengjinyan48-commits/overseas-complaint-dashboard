@@ -1,66 +1,60 @@
 #!/usr/bin/env python3
 """
-从石墨文档（Shimo）自动同步 Excel 数据
-由 GitHub Actions 定时执行或手动触发
+从石墨文档（Shimo 企业私有部署）自动同步 Excel 数据
 
-与金山文档同步脚本的区别：
-- 石墨文档域名为 teamwork.getech.cn（企业私有部署）
-- 下载按钮在右上角工具栏
-- 导出方式为点击"下载"按钮 → 选择 Excel 格式
+用法:
+    python sync_from_shimo.py                          # 使用 SHIMO_AUTH 环境变量
+    SHIMO_AUTH="<base64>" python sync_from_shimo.py    # 直接指定
+
+输出: 2026年海外客户投诉台账.xlsx
 """
 
-import os
-import sys
-import json
-import base64
-import time
-import logging
+import os, sys, json, base64, time, logging
 
 from playwright.sync_api import sync_playwright
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-# ── 配置 ──────────────────────────────────────────────────────────
 SHIMO_URL = "https://teamwork.getech.cn/shimo-h5/shimo-edit/e1898e9f4b794a4786fcdfead749736c"
-SHIMO_DOMAIN = "https://teamwork.getech.cn"
-OUTPUT_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "2026年海外客户投诉台账.xlsx",
-)
-AUTH_B64 = os.getenv("SHIMO_AUTH", os.getenv("KDOCS_AUTH", ""))
+OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "2026年海外客户投诉台账.xlsx")
+AUTH_B64 = os.getenv("SHIMO_AUTH", "")
 
 
 def _ensure_chromium():
-    """确保 Chromium 浏览器已安装"""
     import subprocess
-
     marker = "/tmp/.chromium_installed"
     if os.path.exists(marker):
         return
-    log.info("正在安装 Chromium 浏览器（首次约30秒）...")
-    result = subprocess.run(
+    log.info("正在安装 Chromium 浏览器...")
+    subprocess.run(
         [sys.executable, "-m", "playwright", "install", "chromium"],
         capture_output=True, text=True, timeout=300,
         env={**os.environ, "PLAYWRIGHT_BROWSERS_PATH": "/tmp/ms-playwright"},
     )
-    if result.returncode == 0:
-        with open(marker, "w") as f:
-            f.write("ok")
-        log.info("Chromium 安装完成")
-    else:
-        log.warning("Chromium 安装失败: " + result.stderr[-200:])
+    with open(marker, "w") as f:
+        f.write("ok")
+    log.info("Chromium 安装完成")
 
 
 def main():
     if not AUTH_B64:
-        log.error("SHIMO_AUTH 环境变量未设置！")
+        log.error("SHIMO_AUTH 环境变量未设置！请在 Streamlit Cloud Secrets 或 GitHub Secrets 中配置")
         sys.exit(1)
 
     _ensure_chromium()
 
-    # 解码认证信息
-    auth_bundle = json.loads(base64.b64decode(AUTH_B64).decode())
+    # 解码认证信息，兼容 Python 3.14 的严格 base64 检查
+    raw = AUTH_B64.strip()
+    # 移除可能的换行符和空白字符
+    raw = "".join(raw.split())
+    try:
+        auth_bundle = json.loads(base64.b64decode(raw).decode("utf-8"))
+    except Exception as e:
+        log.error(f"SHIMO_AUTH 解码失败: {e}")
+        log.error("请重新运行 get_shimo_auth.py 获取新的认证信息")
+        sys.exit(1)
+
     cookies = auth_bundle.get("cookies", [])
     ls_data = auth_bundle.get("localStorage", {})
     log.info(f"已加载 {len(cookies)} 个 cookies, {len(ls_data)} 个 localStorage 条目")
@@ -70,11 +64,11 @@ def main():
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
-        # ── 第一步：先访问域名，设置 cookies ──────────────────────
-        page.goto(SHIMO_DOMAIN, timeout=15000, wait_until="domcontentloaded")
+        # 先访问域名设置 cookies
+        page.goto("https://teamwork.getech.cn", timeout=15000, wait_until="domcontentloaded")
         context.add_cookies(cookies)
 
-        # ── 第二步：打开石墨文档 ──────────────────────────────────
+        # 打开石墨文档
         page.goto(SHIMO_URL, timeout=30000, wait_until="domcontentloaded")
         time.sleep(5)
 
@@ -86,20 +80,9 @@ def main():
         page.reload()
         time.sleep(8)
 
-        # 确认登录状态
-        has_login = page.evaluate(
-            '() => !!document.querySelector("[class*=login]") || !!document.querySelector("[class*=auth]")'
-        )
-        if has_login:
-            # 石墨文档可能显示登录页面，检查是否真的需要登录
-            url = page.url
-            if "login" in url.lower() or "auth" in url.lower():
-                log.error("登录态已失效，请重新获取 SHIMO_AUTH！")
-                page.screenshot(path="/tmp/shimo_debug.png")
-                sys.exit(1)
-        log.info("石墨文档已打开")
+        log.info(f"当前页面: {page.url}")
 
-        # ── 第三步：触发下载 ──────────────────────────────────────
+        # ── 触发下载 ──────────────────────────────────────────
         download_done = False
 
         def on_download(dl):
@@ -110,119 +93,90 @@ def main():
 
         page.on("download", on_download)
 
-        # 策略1：点击右上角「下载」按钮
-        # 石墨文档的下载按钮常见选择器
-        download_selectors = [
-            'button:has-text("下载")',
-            '[class*="download"]',
-            '[class*="Download"]',
-            '[class*="toolbar"] button:has-text("下载")',
-            '[class*="header"] button:has-text("下载")',
-            'text="下载"',
-            'button[title*="下载"]',
-            'button[title*="download"]',
-            # 石墨文档文件菜单 → 导出
-            '[class*="menu"] text="导出"',
-            'text="导出为Excel"',
-            'text="导出为 Excel"',
-        ]
+        # 策略1: 点击右上角工具栏的「下载」按钮
+        log.info("查找下载按钮...")
+        clicked = page.evaluate("""
+            () => {
+                const btns = document.querySelectorAll('button, a, [role="button"], div[class*="toolbar"] span, div[class*="header"] span');
+                for (let b of btns) {
+                    const text = (b.textContent || '').trim();
+                    if (text === '下载' || text === '导出' || text === '下载为') {
+                        b.click();
+                        return 'clicked: ' + text;
+                    }
+                }
+                // 尝试找更多菜单
+                const moreBtn = document.querySelector('[class*="more"], [class*="More"], [class*="menu"]');
+                if (moreBtn) {
+                    moreBtn.click();
+                    return 'clicked more menu';
+                }
+                return 'no button found';
+            }
+        """)
+        log.info(f"点击结果: {clicked}")
+        time.sleep(5)
 
-        for selector in download_selectors:
-            if download_done:
-                break
-            try:
-                btn = page.locator(selector).first
-                if btn and btn.is_visible(timeout=2000):
-                    log.info(f"找到下载按钮: {selector}")
-                    btn.click(force=True, timeout=5000)
-                    time.sleep(3)
-                    # 如果有导出选项，选 Excel
-                    excel_btn = page.locator('text="Excel"').first
-                    if excel_btn:
-                        try:
-                            excel_btn.click(timeout=3000)
-                            time.sleep(3)
-                        except Exception:
-                            pass
-            except Exception:
-                continue
-
-        # 策略2：尝试文件菜单
+        # 策略2: 如果有导出菜单，点击 Excel 导出
         if not download_done:
-            log.info("尝试文件菜单...")
-            file_menu_selectors = [
-                'text="文件"',
-                '[class*="file"]',
-                'button:has-text("文件")',
-            ]
-            for sel in file_menu_selectors:
-                if download_done:
-                    break
-                try:
-                    btn = page.locator(sel).first
-                    if btn and btn.is_visible(timeout=2000):
-                        btn.click(timeout=3000)
-                        time.sleep(2)
-                        # 在菜单中找导出/下载
-                        for action in ["导出", "下载为", "另存为"]:
-                            try:
-                                item = page.locator(f'text="{action}"').first
-                                if item:
-                                    item.click(timeout=3000)
-                                    time.sleep(3)
-                                    # 再找 Excel 选项
-                                    excel = page.locator('text="Excel"').first
-                                    if excel:
-                                        try:
-                                            excel.click(timeout=3000)
-                                            time.sleep(3)
-                                        except Exception:
-                                            pass
-                                    break
-                            except Exception:
-                                continue
-                except Exception:
-                    continue
+            exported = page.evaluate("""
+                () => {
+                    const items = document.querySelectorAll('li, div[class*="menu-item"], div[class*="dropdown-item"], span, button');
+                    for (let item of items) {
+                        const text = (item.textContent || '').trim();
+                        if (text.includes('Excel') || text.includes('xlsx') || text.includes('导出为') || text.includes('另存为')) {
+                            item.click();
+                            return 'clicked: ' + text;
+                        }
+                    }
+                    return 'no export option';
+                }
+            """)
+            log.info(f"导出选项: {exported}")
+            time.sleep(5)
 
-        # 策略3：Ctrl+S（石墨文档的保存快捷键）
+        # 策略3: 尝试 Ctrl+S 触发下载
         if not download_done:
             log.info("尝试 Ctrl+S...")
             page.keyboard.press("Control+S")
             time.sleep(5)
 
-        # 策略4：尝试通过 JS 触发导出 API
+        # 策略4: 尝试通过 API 导出
         if not download_done:
-            log.info("尝试 JS 触发导出...")
-            page.evaluate(
-                "() => {"
-                "  let btns = document.querySelectorAll('button');"
-                "  for (let b of btns) {"
-                "    if (b.textContent.includes('下载') || b.textContent.includes('导出')) {"
-                "      b.click();"
-                "      return;"
-                "    }"
-                "  }"
-                "}"
-            )
+            log.info("尝试 API 导出...")
+            page.evaluate("""
+                () => {
+                    // 石墨文档企业版导出 API
+                    const fileId = window.location.pathname.split('/').pop();
+                    const exportUrl = '/shimo-h5/api/v1/files/' + fileId + '/export';
+                    fetch(exportUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'xlsx' })
+                    }).then(r => r.blob()).then(blob => {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'export.xlsx';
+                        a.click();
+                    }).catch(e => console.error(e));
+                }
+            """)
             time.sleep(5)
 
-        # ── 第四步：验证结果 ──────────────────────────────────────
-        if download_done and os.path.exists(OUTPUT_PATH):
+        # 验证结果
+        if download_done and os.path.exists(OUTPUT_PATH) and os.path.getsize(OUTPUT_PATH) > 1000:
             import pandas as pd
-
             df = pd.read_excel(OUTPUT_PATH, sheet_name="所有客诉", header=1)
             df["_n"] = pd.to_numeric(df["编号"], errors="coerce")
-            valid = df[
-                df["_n"].notna()
-                & df["分公司"].notna()
-                & (df["分公司"].astype(str).str.strip() != "")
-            ]
-            log.info(
-                f"✅ 同步成功！{os.path.getsize(OUTPUT_PATH)} bytes, {len(valid)} 条记录"
-            )
+            valid = df[df["_n"].notna() & df["分公司"].notna() & (df["分公司"].astype(str).str.strip() != "")]
+            log.info(f"✅ 同步成功！{os.path.getsize(OUTPUT_PATH)} bytes, {len(valid)} 条记录")
         else:
             page.screenshot(path="/tmp/shimo_debug.png")
-            log.error("下载未触发，调试截图已保存到 /tmp/shimo_debug.png")
+            log.error("下载未触发，调试截图已保存")
+            # 输出页面结构帮助调试
+            body_text = page.evaluate("() => document.body.innerText.substring(0, 500)")
+            log.info(f"页面内容预览: {body_text}")
             sys.exit(1)
 
         context.close()

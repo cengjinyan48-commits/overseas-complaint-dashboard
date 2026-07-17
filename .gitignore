@@ -14,3 +14,7 @@ __pycache__/
 
 # Generated HTML (optional, keep if you want)
 # 2026年海外客户投诉数据看板.html
+
+# 认证信息（敏感文件，禁止提交）
+SHIMO_AUTH.txt
+KDOCS_AUTH.txt
